@@ -1,0 +1,5 @@
+reports/raw/
+*.pfx
+*.pem
+*.key
+.env

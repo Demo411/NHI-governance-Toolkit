@@ -1,0 +1,30 @@
+{
+  "description": "Answer key for the Phase 2 scanner. Maps each seed app to the rule IDs it MUST trigger. Any rule not listed must NOT fire for that app.",
+  "assumptions": [
+    "NHI-006 is excluded everywhere: sign-in activity cannot be seeded, so all seeds look 'never signed in'. Decide in Phase 3 how 'never' is treated; until then the validator ignores NHI-006.",
+    "NHI-007 ('Active client secret in use') fires only on non-expired client secrets; remediation is federation or managed identity. seed-03's secret expires 1 day after seeding, so after expiry it correctly triggers NHI-003 only.",
+    "NHI-008 ('Tenant-wide admin consent to a high-risk delegated permission') fires on an oauth2PermissionGrant with consentType AllPrincipals and a scope in [Mail.Read, Mail.ReadWrite, Mail.Send, Files.ReadWrite.All, Directory.ReadWrite.All, Application.ReadWrite.All, RoleManagement.ReadWrite.Directory]. Weight Low, control AC-6.",
+    "The validator checks seed apps only (names starting 'seed-'). Non-seed apps such as Graph Command Line Tools are ignored.",
+    "NHI-003 for seed-03 only holds once the secret has expired (about 1 day after seeding). Seed at least 24h before validating (re-running skips existing apps, so it does not reset seed-03's secret).",
+    "NHI-004 is based on GRANTED application permissions. Requested-but-not-consented (seed-07) and delegated-only (seed-08) must not trigger it."
+  ],
+  "ignored_rules": ["NHI-006"],
+  "apps": {
+    "seed-01-ownerless":          { "expected_rules": ["NHI-001"] },
+    "seed-02-longsecret":         { "expected_rules": ["NHI-002", "NHI-007"] },
+    "seed-03-expiring":           { "expected_rules": ["NHI-003"], "valid_after": "secret expiry (~1 day after seeding)" },
+    "seed-04-mailread-app":       { "expected_rules": ["NHI-004"] },
+    "seed-05-dirwrite":           { "expected_rules": ["NHI-001", "NHI-004"] },
+    "seed-06-appadmin":           { "expected_rules": ["NHI-005"] },
+    "seed-07-requested-only":     { "expected_rules": [], "purpose": "requested vs granted: must produce no findings" },
+    "seed-08-mailread-delegated": { "expected_rules": ["NHI-008"], "purpose": "tenant-wide delegated Mail.Read consent: triggers NHI-008 (Low) but not NHI-004; must score below seed-04" },
+    "seed-09-worstcase":          { "expected_rules": ["NHI-001", "NHI-002", "NHI-004", "NHI-007"], "purpose": "must have the highest score" },
+    "seed-10-clean":              { "expected_rules": [], "purpose": "negative control" }
+  },
+  "score_constraints": [
+    "score(seed-09-worstcase) is the maximum across all seeds",
+    "score(seed-08-mailread-delegated) < score(seed-04-mailread-app)",
+    "score(seed-10-clean) == 0 and score(seed-07-requested-only) == 0",
+    "score(seed-08-mailread-delegated) > 0 (NHI-008 is Low but non-zero)"
+  ]
+}
