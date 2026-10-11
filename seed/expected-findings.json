@@ -6,7 +6,8 @@
     "NHI-008 ('Tenant-wide admin consent to a high-risk delegated permission') fires on an oauth2PermissionGrant with consentType AllPrincipals and a scope in [Mail.Read, Mail.ReadWrite, Mail.Send, Files.ReadWrite.All, Directory.ReadWrite.All, Application.ReadWrite.All, RoleManagement.ReadWrite.Directory]. Weight Low, control AC-6.",
     "The validator checks seed apps only (names starting 'seed-'). Non-seed apps such as Graph Command Line Tools are ignored.",
     "NHI-003 for seed-03 only holds once the secret has expired (about 1 day after seeding). Seed at least 24h before validating (re-running skips existing apps, so it does not reset seed-03's secret).",
-    "NHI-004 is based on GRANTED application permissions. Requested-but-not-consented (seed-07) and delegated-only (seed-08) must not trigger it."
+    "NHI-004 is based on GRANTED application permissions. Requested-but-not-consented (seed-07) and delegated-only (seed-08) must not trigger it.",
+    "seed-11's only credential lives on the SERVICE PRINCIPAL (hidden-credential technique); the app registration has none. Credential rules (NHI-002/003/007) must read both application.* and servicePrincipal.* credentials."
   ],
   "ignored_rules": ["NHI-006"],
   "apps": {
@@ -19,12 +20,14 @@
     "seed-07-requested-only":     { "expected_rules": [], "purpose": "requested vs granted: must produce no findings" },
     "seed-08-mailread-delegated": { "expected_rules": ["NHI-008"], "purpose": "tenant-wide delegated Mail.Read consent: triggers NHI-008 (Low) but not NHI-004; must score below seed-04" },
     "seed-09-worstcase":          { "expected_rules": ["NHI-001", "NHI-002", "NHI-004", "NHI-007"], "purpose": "must have the highest score" },
-    "seed-10-clean":              { "expected_rules": [], "purpose": "negative control" }
+    "seed-10-clean":              { "expected_rules": [], "purpose": "negative control" },
+    "seed-11-sp-secret":          { "expected_rules": ["NHI-007"], "purpose": "SP-level (hidden) active secret, 90 days, owned: triggers NHI-007 only; proves the scanner reads SP credentials" }
   },
   "score_constraints": [
     "score(seed-09-worstcase) is the maximum across all seeds",
     "score(seed-08-mailread-delegated) < score(seed-04-mailread-app)",
     "score(seed-10-clean) == 0 and score(seed-07-requested-only) == 0",
-    "score(seed-08-mailread-delegated) > 0 (NHI-008 is Low but non-zero)"
+    "score(seed-08-mailread-delegated) > 0 (NHI-008 is Low but non-zero)",
+    "score(seed-11-sp-secret) == weight(NHI-007) and > 0"
   ]
 }

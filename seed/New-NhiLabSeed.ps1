@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Seeds the lab tenant with 10 deliberately risky (or deliberately clean) non-human identities.
+    Seeds the lab tenant with 11 deliberately risky (or deliberately clean) non-human identities.
 
 .DESCRIPTION
     Creates the ground truth the Phase 2 scanner is tested against. Every object is tagged
@@ -55,7 +55,12 @@ $SeedApps = @(
        GrantedAppRoles = @('RoleManagement.ReadWrite.Directory');
        Purpose = 'No owner + 2-year secret + RoleManagement.ReadWrite.Directory granted' },
     @{ Name = 'seed-10-clean';              HasOwner = $true;  SecretDays = 0;
-       Purpose = 'Negative control: owner, no credentials, no risky permissions' }
+       Purpose = 'Negative control: owner, no credentials, no risky permissions' },
+    # SpSecretDays puts the secret on the SERVICE PRINCIPAL, not the app registration. That is the
+    # "hidden credential" persistence technique: it does not appear under App registrations >
+    # Certificates & secrets, so a scanner that only reads /applications will miss it.
+    @{ Name = 'seed-11-sp-secret';          HasOwner = $true;  SecretDays = 0; SpSecretDays = 90;
+       Purpose = 'Secret on the service principal only (hidden credential), active, 90 days' }
 )
 
 # ---------------------------------------------------------------------------
@@ -125,6 +130,7 @@ foreach ($seed in $SeedApps) {
         RequestedOnlyAppRoles  = @()
         GrantedDelegatedScopes = @()
         DirectoryRole          = $null
+        SpSecretDays           = 0
     }
     foreach ($key in $seed.Keys) { $def[$key] = $seed[$key] }
 
@@ -184,6 +190,20 @@ foreach ($seed in $SeedApps) {
                 EndDateTime   = (Get-Date).ToUniversalTime().AddDays($def.SecretDays)
             }
             $null = Invoke-WithRetry { Add-MgApplicationPassword -ApplicationId $app.Id -PasswordCredential $cred }
+        }
+
+        # SP-level secret (seed-11): same create-and-discard rule. The 90-day lifetime is deliberately
+        # well under the NHI-002 threshold (180 days) so this seed tests only WHERE the credential
+        # lives, not the lifetime boundary. One $now feeds both dates for a clean, exact lifetime.
+        if ($def.SpSecretDays -gt 0 -and $PSCmdlet.ShouldProcess($name, "Add service-principal client secret valid $($def.SpSecretDays) day(s); value discarded")) {
+            $now = (Get-Date).ToUniversalTime()
+            $spCred = @{
+                DisplayName   = 'seed-11-sp-secret'
+                StartDateTime = $now
+                EndDateTime   = $now.AddDays($def.SpSecretDays)
+            }
+            $null = Invoke-WithRetry { Add-MgServicePrincipalPassword -ServicePrincipalId $sp.Id -PasswordCredential $spCred }
+            Write-Host ("  SP secret created {0:yyyy-MM-ddTHH:mm:ssZ} UTC, ends {1:yyyy-MM-ddTHH:mm:ssZ} (value discarded)" -f $now, $spCred.EndDateTime)
         }
 
         # Application permissions: admin consent = an appRoleAssignment on the Graph SP.

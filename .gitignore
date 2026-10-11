@@ -3,3 +3,6 @@ reports/raw/
 *.pem
 *.key
 .env
+
+# Inventory output contains tenant data
+output/
