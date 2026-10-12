@@ -2,10 +2,10 @@
   "description": "Answer key for the Phase 2 scanner. Maps each seed app to the rule IDs it MUST trigger. Any rule not listed must NOT fire for that app.",
   "assumptions": [
     "NHI-006 is excluded everywhere: sign-in activity cannot be seeded, so all seeds look 'never signed in'. Decide in Phase 3 how 'never' is treated; until then the validator ignores NHI-006.",
-    "NHI-007 ('Active client secret in use') fires only on non-expired client secrets; remediation is federation or managed identity. seed-03's secret expires 1 day after seeding, so after expiry it correctly triggers NHI-003 only.",
+    "NHI-007 ('Active client secret in use') fires only on non-expired client secrets; remediation is federation or managed identity. seed-03's secret expires 1 day after seeding, so its expectation depends on the inventory's scanStartUtc: before expiry it triggers NHI-007 only, after expiry NHI-003 only. See the time_dependent block on seed-03.",
     "NHI-008 ('Tenant-wide admin consent to a high-risk delegated permission') fires on an oauth2PermissionGrant with consentType AllPrincipals and a scope in [Mail.Read, Mail.ReadWrite, Mail.Send, Files.ReadWrite.All, Directory.ReadWrite.All, Application.ReadWrite.All, RoleManagement.ReadWrite.Directory]. Weight Low, control AC-6.",
-    "The validator checks seed apps only (names starting 'seed-'). Non-seed apps such as Graph Command Line Tools are ignored.",
-    "NHI-003 for seed-03 only holds once the secret has expired (about 1 day after seeding). Seed at least 24h before validating (re-running skips existing apps, so it does not reset seed-03's secret).",
+    "The validator checks seed identities only, identified by the 'nhi-lab-seed' tag in application.tags or servicePrincipal.tags, never by display name (notes are not captured in the inventory, so tags are the only marker). The keys in 'apps' below are display names used purely as labels to look up which expectations apply to a tag-verified seed; a name never decides whether an identity is a seed. The validator must fail if a tagged identity has no key here, or a key here has no tagged identity (this catches renames). Non-seed identities such as Graph Command Line Tools are ignored.",
+    "Time-dependent expectations are resolved against the inventory's own scanMetadata.scanStartUtc, never the current clock, so re-validating an old inventory file gives the same answer. The pivot is the credential's endDateTime read from the inventory; a credential is expired when endDateTime <= scanStartUtc. Re-running the seed script skips existing apps, so it does not reset seed-03's secret.",
     "NHI-004 is based on GRANTED application permissions. Requested-but-not-consented (seed-07) and delegated-only (seed-08) must not trigger it.",
     "seed-11's only credential lives on the SERVICE PRINCIPAL (hidden-credential technique); the app registration has none. Credential rules (NHI-002/003/007) must read both application.* and servicePrincipal.* credentials."
   ],
@@ -13,7 +13,16 @@
   "apps": {
     "seed-01-ownerless":          { "expected_rules": ["NHI-001"] },
     "seed-02-longsecret":         { "expected_rules": ["NHI-002", "NHI-007"] },
-    "seed-03-expiring":           { "expected_rules": ["NHI-003"], "valid_after": "secret expiry (~1 day after seeding)" },
+    "seed-03-expiring": {
+      "time_dependent": {
+        "clock": "scanMetadata.scanStartUtc",
+        "pivot": "endDateTime of the single client secret in application.passwordCredentials",
+        "expired_when": "endDateTime <= scanStartUtc",
+        "before_expiry": { "expected_rules": ["NHI-007"] },
+        "after_expiry":  { "expected_rules": ["NHI-003"] }
+      },
+      "purpose": "A short-lived secret that flips from NHI-007 (active) to NHI-003 (expired) as the clock passes its end date. Synthetic fixtures (TODO.md) cover both sides and the exact boundary."
+    },
     "seed-04-mailread-app":       { "expected_rules": ["NHI-004"] },
     "seed-05-dirwrite":           { "expected_rules": ["NHI-001", "NHI-004"] },
     "seed-06-appadmin":           { "expected_rules": ["NHI-005"] },

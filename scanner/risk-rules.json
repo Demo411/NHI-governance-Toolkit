@@ -1,0 +1,261 @@
+{
+  "schemaVersion": "0.1.0-draft",
+  "description": "NHI risk rules. Declarative only: the scoring engine (not yet written) reads this file plus an inventory JSON. Points come from scoring.tierPoints via each rule's severity; rules never carry their own numbers, so there is one place to change a weight.",
+
+  "evaluation": {
+    "clock": "scanMetadata.scanStartUtc",
+    "clockNote": "Rules never read the wall clock. 'expired' means endDateTime <= scanStartUtc; 'active' means endDateTime > scanStartUtc.",
+    "inputs": "Inventory JSON only. No Graph calls in Phase 3.",
+    "granularity": "At most one finding per rule per identity (appId). The finding's evidence lists every matching item. NHI-004 fires once at the HIGHEST matching tier, so an app with five High permissions scores 25, not 125.",
+    "credentialSources": {
+      "secrets": ["application.passwordCredentials", "servicePrincipal.passwordCredentials"],
+      "certificates": ["application.keyCredentials", "servicePrincipal.keyCredentials"],
+      "note": "Both objects must always be read. seed-11 keeps its only credential on the service principal (regression test)."
+    },
+    "ownerTypes": {
+      "values": ["ThisTenant", "Microsoft", "ThirdParty", "ManagedIdentity", "Unknown"],
+      "source": "identities[].ownerType, assigned by the Phase 2 scanner (ManagedIdentity is decided first, then appOwnerOrganizationId against this tenant and the Microsoft tenants).",
+      "policy": "Every rule covers every type unless its appliesToReason states why not. Unknown is never excluded ('never guess'). Only NHI-001 excludes anything (Microsoft, ManagedIdentity)."
+    },
+    "resourceResolution": {
+      "graphAppId": "00000003-0000-0000-c000-000000000000",
+      "method": "Build an index of identities[].servicePrincipal.id -> identities[].appId from the inventory. For each appRoleAssignments[] / oauth2PermissionGrants[] entry, look up resourceId in that index and compare the resolved appId. resourceDisplayName is a label only and is never used to decide a match.",
+      "why": "resourceId is a tenant-local service principal object id, and a display name can be chosen by anyone; the appId of Microsoft Graph is fixed and cannot be reused by a tenant app.",
+      "unresolved": "If a resourceId is not in the index, the entry cannot match any rule. The engine must record it as a scan warning (unresolvedResource), not fail silently. Currently 0 of 6 references are unresolved in the newest inventory."
+    },
+    "lifetimeDays": "floor((endDateTime - startDateTime).TotalDays). Whole days absorb the client-side end vs server-side start skew noted in TODO.md; NHI-002 fires when lifetimeDays > 180, so exactly 180 does not fire."
+  },
+
+  "scoring": {
+    "model": "additive tiers + named combination uplifts",
+    "tierPoints": { "Critical": 40, "High": 25, "Medium": 10, "Low": 3 },
+    "scoreCap": null,
+    "scoreCapNote": "DECIDED: no cap. Scores rank identities and a cap would flatten the top of the ranking. Theoretical max is 131 (001:10 + 002:10 + 003:3 + 004:40 + 005:40 + 007:10 + 008:3 = 116, plus the 15-point uplift), so scores are not a 0-100 scale.",
+    "singleFindingRule": "An identity with exactly one finding scores exactly tierPoints[severity]. Combination uplifts can never fire on a single finding (seed-11 constraint)."
+  },
+
+  "rules": [
+    {
+      "id": "NHI-001",
+      "name": "No owner / sponsor",
+      "status": "active",
+      "severity": "Medium",
+      "appliesTo": { "ownerType": ["ThisTenant", "ThirdParty", "Unknown"] },
+      "appliesToReason": "Excludes Microsoft first-party (never owned by tenant users; ~78 meaningless findings) and ManagedIdentity (no owner concept; its lifecycle follows the Azure resource it is attached to). ThirdParty is included on purpose: ownerless consented SaaS apps are a real AC-2 gap, and will be noisy. Unknown is never excluded.",
+      "logic": "application.owners and servicePrincipal.owners are both empty (or absent).",
+      "rationale": "Nobody is accountable for the identity: no one to ask what it is for, rotate its credentials, or approve its removal. This is a governance gap, not by itself exploitable.",
+      "nist": ["AC-2"],
+      "remediation": "Assign at least one owner (two preferred) or a sponsor.",
+      "references": []
+    },
+    {
+      "id": "NHI-002",
+      "name": "Client secret lifetime over 180 days",
+      "status": "active",
+      "severity": "Medium",
+      "appliesTo": { "ownerType": ["ThisTenant", "Microsoft", "ThirdParty", "ManagedIdentity", "Unknown"] },
+      "appliesToReason": "All types: any service principal in this tenant can carry a secret that someone here created, whoever published the app, including hidden credentials added to third-party or Microsoft service principals.",
+      "logic": "Any client secret (passwordCredentials, on application OR servicePrincipal) with lifetimeDays > 180. Evaluated whether or not the secret has expired.",
+      "rationale": "Long-lived secrets widen the window in which a leaked secret is useful. Fires on expired secrets too, because the question is how the credential was issued. It does NOT mean the secret is still usable; that is NHI-007.",
+      "thresholdNote": "180 days is a project threshold. Microsoft recommends under 12 months for secrets (max 24); 180 days is Microsoft's recommended maximum for certificates. See risk-model.md.",
+      "nist": ["IA-5"],
+      "remediation": "Shorten lifetime, or better, replace with workload identity federation / managed identity.",
+      "references": ["ms-add-credentials", "ms-enforce-secret-standards"]
+    },
+    {
+      "id": "NHI-003",
+      "name": "Expired credential still attached",
+      "status": "active",
+      "severity": "Low",
+      "appliesTo": { "ownerType": ["ThisTenant", "Microsoft", "ThirdParty", "ManagedIdentity", "Unknown"] },
+      "appliesToReason": "All types: stale credentials on any service principal in this tenant are this tenant's cleanup responsibility.",
+      "logic": "Any credential (secret or certificate, on application OR servicePrincipal) with endDateTime <= scanStartUtc.",
+      "rationale": "Dead credentials are clutter that hides live ones and signals nobody is cleaning up. Not exploitable on its own.",
+      "nist": ["IA-5", "AC-2"],
+      "remediation": "Delete the expired credential.",
+      "references": []
+    },
+    {
+      "id": "NHI-004",
+      "name": "High-risk application permission granted",
+      "status": "active",
+      "severity": "variable",
+      "severityNote": "Severity = highest tier among matching granted permissions.",
+      "appliesTo": { "ownerType": ["ThisTenant", "Microsoft", "ThirdParty", "ManagedIdentity", "Unknown"] },
+      "appliesToReason": "All types: application permission grants are decided by this tenant whoever published the app. Third-party consent and managed-identity privilege are exactly what this rule must catch; Microsoft first-party stays in scope because a tenant admin can still add risky grants to it.",
+      "resourceAppId": "00000003-0000-0000-c000-000000000000",
+      "logic": "servicePrincipal.appRoleAssignments[] where the entry's resourceId resolves (see evaluation.resourceResolution) to a service principal whose appId == resourceAppId, and permission is in a tier below. GRANTED application permissions only: requested-but-not-consented (seed-07) and delegated-only (seed-08) do not count.",
+      "tiers": [
+        {
+          "severity": "Critical",
+          "meaning": "Privilege-granting: the holder can grant itself or others more privilege, so the practical ceiling is Global Administrator.",
+          "permissions": [
+            "RoleManagement.ReadWrite.Directory",
+            "AppRoleAssignment.ReadWrite.All",
+            "Application.ReadWrite.All"
+          ]
+        },
+        {
+          "severity": "High",
+          "meaning": "Broad data or directory access, but no verified direct path to grant privilege.",
+          "permissions": [
+            "Directory.ReadWrite.All",
+            "Mail.Read",
+            "Mail.ReadWrite",
+            "Mail.Send",
+            "Files.ReadWrite.All"
+          ],
+          "reviewNotes": {
+            "Directory.ReadWrite.All": "Kept in High. Third-party testing (SpecterOps, 2024) found it cannot add credentials, grant app roles, promote to Global Admin or change role-assignable groups. See risk-model.md for the evidence and caveats."
+          }
+        }
+      ],
+      "tierListNote": "The High list is the NHI-008 list minus the Critical entries. UNRESEARCHED, PROJECT CONVENTION: it has not been checked against external sources. Research is a TODO.md item; see risk-model.md.",
+      "rationale": "Application permissions work without a signed-in user and are tenant-wide, so impact is what the permission lets the identity do across the whole tenant.",
+      "nist": ["AC-6"],
+      "remediation": "Remove the permission, or replace it with a narrower one (resource-specific consent, *.OwnedBy variants).",
+      "references": ["ms-graph-permissions", "bloodhound-grant-app-roles", "specterops-dirrw"]
+    },
+    {
+      "id": "NHI-005",
+      "name": "Privileged directory role assigned to a service principal",
+      "status": "active",
+      "severity": "Critical",
+      "appliesTo": { "ownerType": ["ThisTenant", "Microsoft", "ThirdParty", "ManagedIdentity", "Unknown"] },
+      "appliesToReason": "All types: directory role assignments are tenant-controlled whatever the identity type; managed identities and third-party apps holding privileged roles are in scope on purpose.",
+      "logic": "servicePrincipal.directoryRoles[] where assignmentType is in assignmentTypes and roleDefinitionId is in privilegedRoles[].roleDefinitionId.",
+      "assignmentTypes": ["Active"],
+      "assignmentTypesNote": "Eligible (PIM) assignments are recorded by the inventory but do not fire. See risk-model.md and the TODO.md item on service principal self-activation.",
+      "privilegedRoles": [
+        { "roleDefinitionId": "62e90394-69f5-4237-9190-012177145e10", "label": "Global Administrator" },
+        { "roleDefinitionId": "e8611ab8-c189-46e8-94e1-60213ab1f814", "label": "Privileged Role Administrator" },
+        { "roleDefinitionId": "7be44c8a-adaf-4e2a-84d6-ab2649e08a13", "label": "Privileged Authentication Administrator" },
+        { "roleDefinitionId": "9b895d92-2cd3-44c7-9d02-a6ac2d5ea5c3", "label": "Application Administrator" },
+        { "roleDefinitionId": "158c047a-c907-4556-b7ef-446551a6b5f7", "label": "Cloud Application Administrator" }
+      ],
+      "privilegedRolesNote": "Static list of built-in role template IDs. Matching is by roleDefinitionId only; label is for humans (a custom role can copy a display name but not a built-in template ID). Each role is marked 'This is a privileged role' on Microsoft's permissions-reference page, which the privileged-roles-permissions page points to for the list. Microsoft's own isPrivileged flag is not in the inventory and Phase 3 may not call Graph, so this list must be maintained by hand. It is a deliberate subset, not every role Microsoft marks privileged.",
+      "rationale": "A standing privileged directory role gives the identity tenant-wide control; for Application Administrator that includes managing credentials on apps.",
+      "nist": ["AC-6"],
+      "remediation": "Remove the role assignment; use a least-privilege custom role or Graph permission instead.",
+      "references": ["ms-privileged-roles", "ms-permissions-reference"]
+    },
+    {
+      "id": "NHI-006",
+      "name": "No sign-in in 90+ days",
+      "status": "deferred",
+      "severity": "Medium",
+      "appliesTo": { "ownerType": ["ThisTenant", "Microsoft", "ThirdParty", "ManagedIdentity", "Unknown"] },
+      "appliesToReason": "All types (draft): an unused service principal is an AC-2 gap whoever published it. Deferred, so currently inert.",
+      "deferredReason":"Sign-in activity cannot be seeded; every seed shows signInActivity = null. How 'never signed in' is treated is undecided. The engine must skip deferred rules, so they add 0 to every score.",
+      "logic": "(draft) servicePrincipal.signInActivity.lastSignInDateTime older than 90 days before scanStartUtc. Null handling TBD.",
+      "nist": ["AC-2"],
+      "references": []
+    },
+    {
+      "id": "NHI-007",
+      "name": "Active client secret in use",
+      "status": "active",
+      "severity": "Medium",
+      "appliesTo": { "ownerType": ["ThisTenant", "Microsoft", "ThirdParty", "ManagedIdentity", "Unknown"] },
+      "appliesToReason": "All types: a live secret on any service principal in this tenant is a usable credential, including hidden credentials on third-party or Microsoft service principals.",
+      "logic": "Any client secret (passwordCredentials, on application OR servicePrincipal) with endDateTime > scanStartUtc. Certificates do not count.",
+      "rationale": "A usable shared secret can be copied, leaked and replayed. Microsoft says client secrets should not be used in production. This is the 'armed' half of the combination uplift.",
+      "nist": ["IA-5"],
+      "remediation": "Replace with workload identity federation (OIDC) or a managed identity, then delete the secret.",
+      "references": ["ms-add-credentials", "ms-migrate-from-secrets"]
+    },
+    {
+      "id": "NHI-008",
+      "name": "Tenant-wide consent to a high-risk delegated permission",
+      "status": "active",
+      "severity": "Low",
+      "appliesTo": { "ownerType": ["ThisTenant", "Microsoft", "ThirdParty", "ManagedIdentity", "Unknown"] },
+      "appliesToReason": "All types: tenant-wide consent is a tenant decision for any app, and third-party apps are the main target. Microsoft first-party stays in scope (for example Microsoft Graph Command Line Tools holds AllPrincipals grants today).",
+      "resourceAppId": "00000003-0000-0000-c000-000000000000",
+      "logic": "servicePrincipal.oauth2PermissionGrants[] where consentType == 'AllPrincipals', the entry's resourceId resolves (see evaluation.resourceResolution) to a service principal whose appId == resourceAppId, and any entry of scopes[] is in the list below.",
+      "scopes": [
+        "Mail.Read",
+        "Mail.ReadWrite",
+        "Mail.Send",
+        "Files.ReadWrite.All",
+        "Directory.ReadWrite.All",
+        "Application.ReadWrite.All",
+        "RoleManagement.ReadWrite.Directory"
+      ],
+      "rationale": "Delegated permissions are limited by the signed-in user's own rights, so impact is lower than the same application permission. Low but non-zero.",
+      "nist": ["AC-6"],
+      "remediation": "Revoke the tenant-wide grant; require per-user consent or narrower scopes.",
+      "references": ["ms-graph-permissions"]
+    }
+  ],
+
+  "combinations": [
+    {
+      "id": "COMBO-U1",
+      "name": "Armed privilege",
+      "status": "active",
+      "requires": { "anyOf": ["NHI-004", "NHI-005"], "allOf": ["NHI-007"] },
+      "uplift": 15,
+      "appliesOnce": true,
+      "rationale": "Privilege is only dangerous to the extent someone can authenticate as the identity. An active client secret is a usable credential. NHI-002 is deliberately NOT in the condition: it can fire on an expired secret, which proves nothing about current usability.",
+      "nist": ["AC-6", "IA-5"]
+    }
+  ],
+
+  "consideredAndRejected": [
+    {
+      "id": "COMBO-U2",
+      "name": "Unattended privilege",
+      "proposal": "(NHI-004 or NHI-005) and NHI-001, +10",
+      "rejectedBecause": "Ownerless is a governance gap, not exploitability. It does not make the identity easier to abuse, so it should not raise the risk score of the privilege."
+    }
+  ],
+
+  "references": {
+    "ms-privileged-roles": {
+      "title": "Privileged roles and permissions in Microsoft Entra ID",
+      "url": "https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/privileged-roles-permissions",
+      "verifiedFor": "Defines the PRIVILEGED label (itself in preview); its example output shows Application Administrator with IsPrivileged = True. It does NOT list the roles itself; it points to the permissions-reference page for the list."
+    },
+    "ms-permissions-reference": {
+      "title": "Microsoft Entra built-in roles",
+      "url": "https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/permissions-reference",
+      "verifiedFor": "Template IDs for the five NHI-005 roles, and the sentence 'This is a privileged role' in each role's section (read directly for Global Administrator, Privileged Role Administrator, Privileged Authentication Administrator, Application Administrator, Cloud Application Administrator)."
+    },
+    "ms-graph-permissions": {
+      "title": "Microsoft Graph permissions reference",
+      "url": "https://learn.microsoft.com/en-us/graph/permissions-reference",
+      "verifiedFor": "Official caution text on Application.ReadWrite.All (credential management lets an app act as other entities) and AppRoleAssignment.ReadWrite.All (lets an app grant additional privileges to itself, other applications or any user)."
+    },
+    "ms-add-credentials": {
+      "title": "Add and manage app credentials in Microsoft Entra ID",
+      "url": "https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-credentials",
+      "verifiedFor": "Client secrets 'should not be used in production'; lifetime capped at 24 months; Microsoft recommends under 12 months; federated credentials recommended for workloads such as GitHub Actions."
+    },
+    "ms-enforce-secret-standards": {
+      "title": "Tutorial: Enforce secret and certificate standards using application management policies",
+      "url": "https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/tutorial-enforce-secret-standards",
+      "verifiedFor": "Recommends disabling client secrets; 180 days is the recommended maximum for CERTIFICATES (not secrets)."
+    },
+    "ms-migrate-from-secrets": {
+      "title": "Migrate applications away from secret-based authentication",
+      "url": "https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/migrate-applications-from-secrets",
+      "verifiedFor": "Exposed secrets let an attacker escalate depending on the app's permissions; recommends managed identities and federated identity."
+    },
+    "bloodhound-grant-app-roles": {
+      "title": "BloodHound edge: AZMGGrantAppRoles",
+      "url": "https://bloodhound.specterops.io/resources/edges/az-mg-grant-app-roles",
+      "verifiedFor": "Third-party: AppRoleAssignment.ReadWrite.All can grant RoleManagement.ReadWrite.Directory to a service principal you control, which can then assign Global Administrator."
+    },
+    "specterops-dirrw": {
+      "title": "Directory.ReadWrite.All Is Not As Powerful As You Might Think",
+      "url": "https://specterops.io/blog/2024/02/12/directory-readwrite-all-is-not-as-powerful-as-you-might-think/",
+      "verifiedFor": "Third-party testing, 2024: see risk-model.md. Not Microsoft guidance; Graph behaviour can change."
+    },
+    "nist-800-53": {
+      "title": "NIST SP 800-53 Rev. 5 (Update 1)",
+      "url": "https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final",
+      "verifiedFor": "Publication page exists and is Rev. 5. AC-2, AC-6 and IA-5 mappings come from CLAUDE.md; control text not re-read here."
+    }
+  }
+}
