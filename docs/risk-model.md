@@ -1,8 +1,12 @@
-# Risk model (DRAFT)
+# Risk model
 
 Why each rule and weight exists. The machine-readable version is `scanner/risk-rules.json`;
 this document is the justification. Weights are the project owner's decisions; where a number is still
 open it says so.
+
+**Status:** implemented. `scanner/Invoke-NhiScoring.ps1` (engine v0.1.0) applies these rules to
+an inventory file, `scanner/Test-NhiFindings.ps1` checks the result against the Phase 1 answer
+key, and `tests/` holds 49 Pester 5 tests on synthetic inventories. See section 8.
 
 ## 1. Scoring model
 
@@ -42,6 +46,19 @@ ownerless identity is a governance gap, not an exploitability gap: lacking an ow
 make the identity easier to abuse. NHI-001 already scores in its own right. Side effect that
 also argued against it: it would have pushed seed-05 (45) above seed-06 (40).
 
+### Considered and deferred
+
+**Per-user (`Principal`) grants of Critical-class delegated scopes are not covered by NHI-008.**
+NHI-008 is defined on `AllPrincipals` (tenant-wide) consent only. Considered and deferred: an
+admin consenting for themselves on Microsoft admin tooling is routine and bounded by their own
+rights; revisit if third-party apps appear with such grants. Concretely, on the newest inventory
+the Microsoft Graph Command Line Tools app holds a per-user grant that includes
+`Application.ReadWrite.All`, `RoleManagement.ReadWrite.Directory` and
+`AppRoleAssignment.ReadWrite.All`; its `AllPrincipals` grant is only `openid`,
+`Application.Read.All`, `offline_access` and `profile`, so NHI-008 correctly reports nothing for
+it. No new rule was added. A related open item is splitting NHI-008 by scope tier, like NHI-004
+(TODO.md).
+
 ### NHI-002 and NHI-007 on the same secret
 
 Both fire on seed-02 and seed-09 and both are counted. This is intended, not double counting.
@@ -79,9 +96,10 @@ rule covers every type unless its `appliesToReason` in `risk-rules.json` says wh
 | NHI-007 | All five | A live secret on any service principal here is a usable credential. |
 | NHI-008 | All five | Tenant-wide consent is a tenant decision; third-party apps are the main target. |
 
-My earlier draft scoped every rule except NHI-001 to `ThisTenant` + `Microsoft`, which silently
-excluded `ThirdParty` and `ManagedIdentity`. That was a mistake, now fixed. The managed-identity
-exclusion for NHI-001 rests on my reading of how managed identities work, not on a cited source.
+An earlier draft scoped every rule except NHI-001 to `ThisTenant` + `Microsoft`, which silently
+excluded `ThirdParty` and `ManagedIdentity`. That was a mistake and is fixed. The
+managed-identity exclusion for NHI-001 rests on reasoning about how managed identities work
+(no owner concept; lifecycle follows the Azure resource), not on a cited source.
 
 ### Identifying seeds
 
@@ -89,7 +107,7 @@ Seeds are identified by the `nhi-lab-seed` tag in `application.tags` or
 `servicePrincipal.tags`, never by display name (all 11 seeds carry it on both). The inventory
 does not capture `notes`, so the tag is the only usable marker. The answer key is still keyed by
 display name, but only as a lookup label for which expectations apply to a tag-verified seed;
-the validator must fail if a tagged identity has no key or a key has no tagged identity. A
+the validator fails if a tagged identity has no key or a key has no tagged identity. A
 per-seed tag (for example `nhi-lab-seed:seed-03`) would remove even that, but needs re-seeding.
 Tags are editable by anyone with write access to the app, so this is a lab convenience, not a
 security boundary.
@@ -111,15 +129,16 @@ Evaluation details that affect results:
   inventory (`servicePrincipal.id` -> `appId`), resolves `resourceId`, and requires the resolved
   appId to be `00000003-0000-0000-c000-000000000000` (Microsoft Graph). A display name can be
   chosen by anyone; Graph's appId cannot be reused by a tenant app. On the newest inventory all
-  6 references resolve. A `resourceId` missing from the inventory cannot match and must be
-  reported as an `unresolvedResource` warning.
+  6 references resolve. A `resourceId` missing from the inventory cannot match and is recorded
+  as an `unresolvedResource` warning in the findings file.
 - **NHI-005 matching** is by built-in role template ID (`roleDefinitionId`); display names are
   labels only. See section 3a.
 - **NHI-005 counts Active assignments only.** An Active assignment is usable right now. An
   Eligible (PIM) assignment is only a right to ask for the role, and activation is a separate
   step. Whether a service principal can perform that activation itself through the API is not
   established, so counting Eligible would assert an exposure we have not shown. The inventory
-  records Eligible assignments anyway, so this can be revisited without a rescan (TODO.md).
+  records Eligible assignments anyway, so this can be revisited without a rescan (TODO.md:
+  check whether service principals can self-activate eligible roles via the API).
 
 ## 3. NHI-004 tiers
 
@@ -149,8 +168,8 @@ Evaluation details that affect results:
 
 What the evidence says:
 - Microsoft's description: "read and write data in your organization's directory, such as users
-  and groups ... Does not allow user or group deletion." It is not labelled privileged on the
-  page I read.
+  and groups ... Does not allow user or group deletion." It is not labelled privileged in the
+  text that was read.
 - SpecterOps tested it in 2024. They found it **could not**: promote itself to Global Admin,
   grant itself an app role, reset any user's password, add credentials to an app or service
   principal, add owners to an app or service principal, or add members/owners to
@@ -167,7 +186,7 @@ the tenant uses groups.
 Caveats you should be able to state:
 - The evidence is one third-party test from February 2024, not Microsoft documentation. SpecterOps
   itself says Microsoft's documentation states otherwise and that Graph behaviour changes.
-- I did not test it in the lab tenant (that would need a tenant change).
+- It was not tested in the lab tenant (that would need a tenant change).
 - If the lab tenant uses groups for Conditional Access scoping, app assignment or Azure RBAC, the
   residual risk is higher than in an empty lab.
 - If you moved it to Critical: seed-05 would score 50 instead of 35, above seed-06 (40). No
@@ -204,6 +223,11 @@ Conditional Access Administrator appear in the privileged-roles page examples).
 
 ## 4. Scores for the 11 seeds
 
+These are the engine's actual results on `inventory-20261011-143429Z.json` (scan start
+2026-10-11T14:34:29Z, before seed-03's secret expired), confirmed by `Test-NhiFindings.ps1`:
+all 11 rule sets match and all 7 score constraints pass. The "after expiry" row for seed-03 is
+covered by the synthetic tests, not by a live inventory yet.
+
 | Seed | Findings | Base | Uplift | Score |
 |------|----------|------|--------|-------|
 | 01-ownerless | 001 | 10 | | **10** |
@@ -223,15 +247,18 @@ seed-09 math: 10 + 10 + 40 + 10 = 70, plus U1 15 = 85.
 
 ### Constraint check (from `seed/expected-findings.json`)
 
-| Constraint | Result |
-|------------|--------|
-| seed-09 is the maximum | Pass: 85, next is seed-06 at 40 |
-| seed-08 < seed-04 | Pass: 3 < 25 |
-| seed-10 == 0 and seed-07 == 0 | Pass |
-| seed-08 > 0 | Pass: 3 |
-| seed-11 == weight(NHI-007) and > 0 | Pass: 10 == 10; no uplift because it has no NHI-004/005 |
+The answer key now stores constraints as machine-readable objects (the original sentence is kept
+in each `text` field), so the validator executes them rather than a person reading them.
 
-Both seed-03 states pass every constraint (it appears in none of them).
+| Id | Constraint | Result |
+|----|------------|--------|
+| C1 | seed-09 is the maximum across seeds | Pass: 85, next is seed-06 at 40 |
+| C2 | seed-08 < seed-04 | Pass: 3 < 25 |
+| C3a / C3b | seed-10 == 0 and seed-07 == 0 | Pass |
+| C4 | seed-08 > 0 | Pass: 3 |
+| C5a / C5b | seed-11 == weight(NHI-007), and > 0 | Pass: 10 == 10; no uplift because it has no NHI-004/005 |
+
+seed-03 appears in none of the constraints, so both of its states pass them.
 
 ## 5. seed-03 and time
 
@@ -240,8 +267,17 @@ before that, so they correctly show **NHI-007 (10)**, not NHI-003. The answer ke
 `time_dependent` block for seed-03: the validator compares the credential's `endDateTime` (read
 from the inventory) with that inventory's `scanStartUtc`. Expired (`end <= scanStart`) expects
 NHI-003 (3); otherwise NHI-007 (10). Because the clock is the scan's own timestamp, an old
-inventory validates the same way forever. Synthetic fixtures cover both states and the exact
-boundary (TODO.md).
+inventory validates the same way forever. Synthetic tests (`tests/Validator.Tests.ps1`) cover
+one second before, exactly at and one second after the end time, through both the engine and the
+validator; end == scanStart counts as expired.
+
+## 5a. Results across the whole tenant
+
+The engine scores every identity, not just seeds. On the newest inventory it scored 89 identities
+with 0 warnings; only the 9 seeds with findings have any. No non-seed identity has a finding,
+including NHI-008: the only non-seed identity with `AllPrincipals` grants is Microsoft Graph
+Command Line Tools, and none of its tenant-wide scopes are in the NHI-008 list. See "Considered
+and deferred" in section 1 for what that does and does not mean.
 
 ## 6. Open decisions
 
@@ -252,20 +288,24 @@ Decided:
 - NHI-004 High list: accepted as-is, flagged unresearched.
 - Resource matching by resolved appId, not display name.
 
+Considered and deferred:
+- Per-user (`Principal`) grants of Critical-class delegated scopes (section 1).
+
 Still open:
 - NHI-005: Eligible assignments (depends on the self-activation research).
 - NHI-004 High list research.
+- NHI-008 split by scope tier, like NHI-004.
 - NHI-006 null sign-in handling (deferred).
 
 ## 7. Reference verification log
 
-Checked on 2026-10-11. Only pages I actually opened are cited as verified.
+Checked on 2026-10-11. Only pages that were actually opened are cited as verified.
 
 | Source | URL | What it supports | Caveat |
 |--------|-----|------------------|--------|
 | Privileged roles and permissions in Microsoft Entra ID | https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/privileged-roles-permissions | PRIVILEGED label exists; Application Administrator shown with `IsPrivileged: True` | Label is in preview. It does not list the roles; it defers to the page below. |
-| Microsoft Entra built-in roles | https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/permissions-reference | Template IDs and "This is a privileged role" for the five NHI-005 roles | Page is ~403k characters; I read all but the last ~3k, through summaries of each 100k block, not line by line. |
-| Microsoft Graph permissions reference | https://learn.microsoft.com/en-us/graph/permissions-reference | Caution text for Application.ReadWrite.All and AppRoleAssignment.ReadWrite.All | Page is huge; I read the first part only. Directory.ReadWrite.All and RoleManagement.ReadWrite.Directory descriptions came from a third-party mirror (graphpermissions.merill.net), not the official page. |
+| Microsoft Entra built-in roles | https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/permissions-reference | Template IDs and "This is a privileged role" for the five NHI-005 roles | Page is ~403k characters; all but the last ~3k were read, through summaries of each 100k block, not line by line. |
+| Microsoft Graph permissions reference | https://learn.microsoft.com/en-us/graph/permissions-reference | Caution text for Application.ReadWrite.All and AppRoleAssignment.ReadWrite.All | Page is huge; only the first part was read. Directory.ReadWrite.All and RoleManagement.ReadWrite.Directory descriptions came from a third-party mirror (graphpermissions.merill.net), not the official page. |
 | Add and manage app credentials | https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-credentials | Secrets not for production; under 12 months recommended; 24-month cap; federation for workloads | |
 | Enforce secret and certificate standards | https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/tutorial-enforce-secret-standards | 180 days is the recommended certificate maximum; recommends disabling client secrets | Not a secret-lifetime recommendation. |
 | Migrate applications away from secrets | https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/migrate-applications-from-secrets | Exposed secret can escalate depending on app permissions; managed identity / federation | |
@@ -273,8 +313,50 @@ Checked on 2026-10-11. Only pages I actually opened are cited as verified.
 | SpecterOps, Directory.ReadWrite.All | https://specterops.io/blog/2024/02/12/directory-readwrite-all-is-not-as-powerful-as-you-might-think/ | What Directory.ReadWrite.All can and cannot do | Third party; 2024 test |
 | NIST SP 800-53 Rev. 5 | https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final | Publication exists | AC-2/AC-6/IA-5 text not re-read |
 
-**Correction to my earlier message:** I said the portal's add-secret dialog recommends 180 days
-for client secrets. I could not verify that as Microsoft guidance, so it is not cited. The
-verified secret guidance is "under 12 months", and 180 days is the certificate figure.
-I also said the tiers "follow CVSS-style bands"; that was loose, so the doc now calls them a
-project convention.
+**Deliberately not cited:** the claim that the portal's add-secret dialog recommends 180 days
+for client secrets could not be verified as Microsoft guidance. The verified secret guidance is
+"under 12 months", and 180 days is the certificate figure. The tier names and points are not
+tied to CVSS or any other standard; they are a project convention.
+
+## 8. Implementation
+
+**Run it** (all offline: no sign-in, no Graph module, no network):
+
+```powershell
+pwsh scanner/Invoke-NhiScoring.ps1 -InventoryPath output/inventory-<timestamp>.json
+pwsh scanner/Test-NhiFindings.ps1  -FindingsPath  output/findings-<timestamp>.json
+pwsh tests/Invoke-Tests.ps1        # needs Pester 5.x; no tenant required
+```
+
+**Engine** (`scanner/Invoke-NhiScoring.ps1`):
+- Reads one inventory and `scanner/risk-rules.json`; writes `output/findings-<timestamp>.json`
+  (gitignored, like the inventory). It scores every identity.
+- The clock is the inventory's `scanStartUtc`; the machine clock is never read, and a missing
+  `scanStartUtc` is an error. The output has no generation timestamp, so the same inputs give
+  byte-identical output.
+- Rules run only on identities whose `ownerType` the rule covers; rules whose status is not
+  `active` are skipped and listed under `skippedRules`.
+- Each finding records its rule id, severity, points and the exact triggering items: credential
+  `keyId` and which object it is on, permission name, role template ID, or grant scope.
+- Score is shown as `base` (sum of finding points), `uplift` (COMBO-U1) and `total`.
+- The file records the inventory file name, the SHA-256 of the inventory and of
+  `risk-rules.json`, the engine version, and warnings (for example `unresolvedResource`).
+- An active rule with no evaluator in the engine stops the run, so a rule added to the JSON
+  cannot be silently ignored.
+
+**Validator** (`scanner/Test-NhiFindings.ps1`): re-hashes the inventory and the rules file and
+refuses to continue if they differ from what the findings say they were built from; identifies
+seeds by tag; resolves seed-03's time-dependent expectation; compares rule sets and executes the
+score constraints; prints a per-seed table and exits 0 (pass) or 1 (fail).
+
+**Tests** (`tests/`, Pester 5, synthetic inventories only): NHI-002 at 179/180/180d23h59m/181
+days; seed-03 before, at and after expiry; the four resource-resolution cases for NHI-004 and
+NHI-008; a service-principal-only credential (seed-11); COMBO-U1 with active and expired secrets;
+NHI-004 tiering; NHI-005 matching by template ID and Active only; ownerType scope; determinism;
+and the validator's guard rails (tag versus name, hash tampering, failing constraint). The
+suite was mutation-checked: loosening the NHI-002 boundary, the NHI-003 expiry comparison, or
+the resolved-appId check each makes tests fail.
+
+**Known limits:** the NHI-005 role list and the NHI-004/008 scope lists are hand-maintained;
+Eligible role assignments and per-user grants are not scored (section 6); findings reflect only
+what the inventory captured.

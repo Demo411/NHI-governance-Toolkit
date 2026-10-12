@@ -1,6 +1,6 @@
 {
   "schemaVersion": "0.1.0-draft",
-  "description": "NHI risk rules. Declarative only: the scoring engine (not yet written) reads this file plus an inventory JSON. Points come from scoring.tierPoints via each rule's severity; rules never carry their own numbers, so there is one place to change a weight.",
+  "description": "NHI risk rules. Declarative only: the scoring engine (scanner/Invoke-NhiScoring.ps1) reads this file plus an inventory JSON. Points come from scoring.tierPoints via each rule's severity; rules never carry their own numbers, so there is one place to change a weight.",
 
   "evaluation": {
     "clock": "scanMetadata.scanStartUtc",
@@ -55,7 +55,8 @@
       "severity": "Medium",
       "appliesTo": { "ownerType": ["ThisTenant", "Microsoft", "ThirdParty", "ManagedIdentity", "Unknown"] },
       "appliesToReason": "All types: any service principal in this tenant can carry a secret that someone here created, whoever published the app, including hidden credentials added to third-party or Microsoft service principals.",
-      "logic": "Any client secret (passwordCredentials, on application OR servicePrincipal) with lifetimeDays > 180. Evaluated whether or not the secret has expired.",
+      "parameters": { "maxLifetimeDays": 180 },
+      "logic": "Any client secret (passwordCredentials, on application OR servicePrincipal) with lifetimeDays > parameters.maxLifetimeDays (180). Evaluated whether or not the secret has expired.",
       "rationale": "Long-lived secrets widen the window in which a leaked secret is useful. Fires on expired secrets too, because the question is how the credential was issued. It does NOT mean the secret is still usable; that is NHI-007.",
       "thresholdNote": "180 days is a project threshold. Microsoft recommends under 12 months for secrets (max 24); 180 days is Microsoft's recommended maximum for certificates. See risk-model.md.",
       "nist": ["IA-5"],

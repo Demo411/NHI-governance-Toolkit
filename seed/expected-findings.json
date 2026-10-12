@@ -10,6 +10,7 @@
     "seed-11's only credential lives on the SERVICE PRINCIPAL (hidden-credential technique); the app registration has none. Credential rules (NHI-002/003/007) must read both application.* and servicePrincipal.* credentials."
   ],
   "ignored_rules": ["NHI-006"],
+  "score_constraint_note": "Subjects are answer-key names, resolved to identities by the nhi-lab-seed tag (see assumptions). Each constraint keeps its original sentence in 'text'; 'type' and the other fields are what Test-NhiFindings.ps1 executes.",
   "apps": {
     "seed-01-ownerless":          { "expected_rules": ["NHI-001"] },
     "seed-02-longsecret":         { "expected_rules": ["NHI-002", "NHI-007"] },
@@ -33,10 +34,19 @@
     "seed-11-sp-secret":          { "expected_rules": ["NHI-007"], "purpose": "SP-level (hidden) active secret, 90 days, owned: triggers NHI-007 only; proves the scanner reads SP credentials" }
   },
   "score_constraints": [
-    "score(seed-09-worstcase) is the maximum across all seeds",
-    "score(seed-08-mailread-delegated) < score(seed-04-mailread-app)",
-    "score(seed-10-clean) == 0 and score(seed-07-requested-only) == 0",
-    "score(seed-08-mailread-delegated) > 0 (NHI-008 is Low but non-zero)",
-    "score(seed-11-sp-secret) == weight(NHI-007) and > 0"
+    { "id": "C1",  "text": "score(seed-09-worstcase) is the maximum across all seeds",
+      "type": "max_among_seeds", "subject": "seed-09-worstcase" },
+    { "id": "C2",  "text": "score(seed-08-mailread-delegated) < score(seed-04-mailread-app)",
+      "type": "less_than", "left": "seed-08-mailread-delegated", "right": "seed-04-mailread-app" },
+    { "id": "C3a", "text": "score(seed-10-clean) == 0",
+      "type": "equals", "subject": "seed-10-clean", "value": 0 },
+    { "id": "C3b", "text": "score(seed-07-requested-only) == 0",
+      "type": "equals", "subject": "seed-07-requested-only", "value": 0 },
+    { "id": "C4",  "text": "score(seed-08-mailread-delegated) > 0 (NHI-008 is Low but non-zero)",
+      "type": "greater_than", "subject": "seed-08-mailread-delegated", "value": 0 },
+    { "id": "C5a", "text": "score(seed-11-sp-secret) == weight(NHI-007)",
+      "type": "equals_rule_weight", "subject": "seed-11-sp-secret", "rule": "NHI-007" },
+    { "id": "C5b", "text": "score(seed-11-sp-secret) > 0",
+      "type": "greater_than", "subject": "seed-11-sp-secret", "value": 0 }
   ]
 }
