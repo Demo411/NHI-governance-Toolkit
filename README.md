@@ -36,7 +36,7 @@ Measured on the lab tenant (inventory `20261012-130643Z`):
 
 ## Scoring
 
-Scores are additive by severity tier: Critical 40, High 25, Medium 10, Low 3, with no cap. Each rule fires at most once per identity. One combination uplift, **COMBO-U1 "armed privilege"**, adds 15 when an identity has a dangerous permission or role (NHI-004 or NHI-005) **and** an active client secret (NHI-007): the privilege is only usable by an attacker who can obtain a credential, and an expired secret does not qualify. An uplift for "ownerless plus privilege" was considered and rejected as a governance gap, not extra exploitability. Every weight and its reasoning is in [`docs/risk-model.md`](docs/risk-model.md).
+Scores are additive by severity tier: Critical 40, High 25, Medium 10, Low 3, with no cap. Each rule fires at most once per identity. One combination uplift, **COMBO-U1 "armed privilege"**, adds 15 when an identity has a dangerous permission or role (NHI-004 or NHI-005) **and** an active client secret (NHI-007): a powerful identity that also has a working secret is exploitable right now; an expired secret does not qualify. An uplift for "ownerless plus privilege" was considered and rejected as a governance gap, not extra exploitability. Every weight and its reasoning is in [`docs/risk-model.md`](docs/risk-model.md).
 
 ## Design decisions
 
@@ -87,7 +87,7 @@ Full list: [`docs/risk-model.md`](docs/risk-model.md) section 6 and [`TODO.md`](
 
 ```
 .
-├── README.md  LICENSE  TODO.md  CLAUDE.md
+├── README.md  LICENSE  TODO.md
 ├── seed/
 │   ├── New-NhiLabSeed.ps1        # creates 11 tagged lab identities (writes to the tenant)
 │   ├── Remove-NhiLabSeed.ps1     # removes only objects tagged nhi-lab-seed
@@ -104,7 +104,7 @@ Full list: [`docs/risk-model.md`](docs/risk-model.md) section 6 and [`TODO.md`](
 
 ## Roadmap
 
-- **Phase 4:** Entra Agent ID (blueprint, agent identity, sponsor); confirm the scanner detects it, within inventory, sponsor and permissions.
+- **Phase 4:** Entra Agent ID. Create an agent identity (blueprint, agent, sponsor) and confirm the scanner inventories it, records its sponsor and permissions, and scores it correctly.
 - **Phase 5:** replace one app's client secret with GitHub Actions OIDC workload identity federation, then re-scan for a before/after.
 - **Phase 6:** controls mapping, architecture diagram, write-up.
 
