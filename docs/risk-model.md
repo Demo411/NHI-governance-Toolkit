@@ -6,7 +6,7 @@ open it says so.
 
 **Status:** implemented. `scanner/Invoke-NhiScoring.ps1` (engine v0.1.0) applies these rules to
 an inventory file, `scanner/Test-NhiFindings.ps1` checks the result against the Phase 1 answer
-key, and `tests/` holds 49 Pester 5 tests on synthetic inventories. See section 8.
+key, and `tests/` holds 52 Pester 5 tests on synthetic inventories. See section 8.
 
 ## 1. Scoring model
 
@@ -334,12 +334,11 @@ pwsh tests/Invoke-Tests.ps1        # needs Pester 5.x; no tenant required
 - The clock is the inventory's `scanStartUtc`; the machine clock is never read, and a missing
   `scanStartUtc` is an error. The output has no generation timestamp, so the same inputs give
   byte-identical output.
-- Identities are ordered by `Sort-Object` with three keys: total score descending, then
-  `displayName` ascending, then `appId` ascending. The order is therefore fully determined by
-  the data: equal scores never fall back to input order. `Sort-Object` compares strings
-  case-insensitively using the current culture, so two machines with very different culture
-  settings could in principle order unusual display names differently; the scores and
-  findings would still be identical.
+- Identities are ordered by total score descending, then `displayName` ascending, then `appId`
+  ascending. Both string keys use **ordinal** comparison (`[string]::CompareOrdinal`, UTF-16 code
+  units), not `Sort-Object`'s culture-sensitive comparison, so the order is identical on any
+  machine whatever its regional settings (for example `B-app` sorts before `a-app`). `appId` is
+  unique per identity, so equal scores never fall back to input order. A Pester test pins this.
 - Rules run only on identities whose `ownerType` the rule covers; rules whose status is not
   `active` are skipped and listed under `skippedRules`.
 - Each finding records its rule id, severity, points and the exact triggering items: credential
@@ -360,8 +359,8 @@ days; seed-03 before, at and after expiry; the four resource-resolution cases fo
 NHI-008; a service-principal-only credential (seed-11); COMBO-U1 with active and expired secrets;
 NHI-004 tiering; NHI-005 matching by template ID and Active only; ownerType scope; determinism;
 and the validator's guard rails (tag versus name, hash tampering, failing constraint). The
-suite was mutation-checked: loosening the NHI-002 boundary, the NHI-003 expiry comparison, or
-the resolved-appId check each makes tests fail.
+suite was mutation-checked: loosening the NHI-002 boundary, the NHI-003 expiry comparison, the resolved-appId check, or
+the ordinal output ordering each makes tests fail.
 
 **Known limits:** the NHI-005 role list and the NHI-004/008 scope lists are hand-maintained;
 Eligible role assignments and per-user grants are not scored (section 6); findings reflect only

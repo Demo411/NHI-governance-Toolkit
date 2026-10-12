@@ -292,3 +292,33 @@ Describe 'Engine properties (offline, deterministic, traceable)' {
         }
     }
 }
+
+Describe 'Output order is ordinal, not culture-sensitive' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestHelpers.ps1')
+        # Under a culture-sensitive, case-insensitive comparison 'a-app' sorts before 'B-app'; under
+        # ordinal comparison 'B' (U+0042) sorts before 'a' (U+0061). The engine must use ordinal.
+        $ids = @(
+            (New-SynIdentity -Name 'a-app' -AppId 'bbbbbbbb-0000-0000-0000-000000000001'),
+            (New-SynIdentity -Name 'B-app' -AppId 'bbbbbbbb-0000-0000-0000-000000000002'),
+            (New-SynIdentity -Name 'same'  -AppId 'ffffffff-0000-0000-0000-000000000003'),
+            (New-SynIdentity -Name 'same'  -AppId '00000000-0000-0000-0000-000000000004'),
+            (New-SynIdentity -Name 'low-score-first-in-input' -Owners 0)   # NHI-001 -> 10 points
+        )
+        $inv = Write-SynInventory -Identities $ids -ScanStartUtc '2026-06-01T00:00:00Z' -Directory (Join-Path $TestDrive 'ord')
+        $script:ordRun = Invoke-SynEngine -InventoryPath $inv -OutputDirectory (Join-Path $TestDrive 'ord-out')
+    }
+    It 'runs' { $script:ordRun.ExitCode | Should -Be 0 -Because $script:ordRun.Output }
+    It 'sorts higher scores first, then displayName by ordinal comparison ("B-app" before "a-app")' {
+        $names = @($script:ordRun.Findings.identities | ForEach-Object displayName)
+        $names[0] | Should -Be 'low-score-first-in-input'
+        ([array]::IndexOf($names, 'B-app')) | Should -BeLessThan ([array]::IndexOf($names, 'a-app'))
+        # confirm the premise: the culture-sensitive order really is the opposite on this machine
+        ([string]::Compare('a-app', 'B-app', [System.StringComparison]::InvariantCultureIgnoreCase)) | Should -BeLessThan 0
+    }
+    It 'breaks displayName ties by appId, ordinal ascending' {
+        $same = @($script:ordRun.Findings.identities | Where-Object displayName -eq 'same' | ForEach-Object appId)
+        $same[0] | Should -Be '00000000-0000-0000-0000-000000000004'
+        $same[1] | Should -Be 'ffffffff-0000-0000-0000-000000000003'
+    }
+}

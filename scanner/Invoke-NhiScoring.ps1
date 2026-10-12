@@ -419,9 +419,20 @@ function Invoke-Main {
             uplifts     = $uplifts
         }
     }
-    $scored = @($scored | Sort-Object -Property @{ Expression = { $_.score.total }; Descending = $true }, `
-                                                @{ Expression = { $_.displayName } }, `
-                                                @{ Expression = { $_.appId } })
+    # Order: score descending, then displayName, then appId. The two string keys use ORDINAL
+    # comparison (UTF-16 code units), not Sort-Object's culture-sensitive one, so the order is the
+    # same on every machine whatever its regional settings. appId is unique per identity, so no two
+    # identities compare equal and the (unstable) List.Sort cannot change the outcome.
+    $sorted = [System.Collections.Generic.List[object]]::new()
+    foreach ($s in $scored) { $sorted.Add($s) }
+    $sorted.Sort([System.Comparison[object]]{
+        param($a, $b)
+        if ($a.score.total -ne $b.score.total) { return $b.score.total.CompareTo($a.score.total) }
+        $c = [string]::CompareOrdinal([string]$a.displayName, [string]$b.displayName)
+        if ($c -ne 0) { return $c }
+        return [string]::CompareOrdinal([string]$a.appId, [string]$b.appId)
+    })
+    $scored = @($sorted)
 
     $findingsByRule = [ordered]@{}
     foreach ($r in $activeRules) {
