@@ -1,0 +1,94 @@
+{
+  "_note": "Sanitized example: tenantId, tenant domain and admin UPN replaced by placeholders. Everything else is verbatim from the real run.",
+  "scanMetadata": {
+    "scannerVersion": "0.1.0",
+    "tenantId": "<TENANT_ID>",
+    "account": "admin@<TENANT_DOMAIN>",
+    "scanStartUtc": "2026-10-11T14:34:29Z",
+    "scanEndUtc": "2026-10-11T14:35:12Z",
+    "grantedScopes": [
+      "Application.Read.All",
+      "Application.ReadWrite.All",
+      "AppRoleAssignment.ReadWrite.All",
+      "AuditLog.Read.All",
+      "DelegatedPermissionGrant.ReadWrite.All",
+      "Directory.Read.All",
+      "openid",
+      "profile",
+      "RoleManagement.Read.Directory",
+      "RoleManagement.ReadWrite.Directory",
+      "email"
+    ],
+    "writeScopesPresent": true,
+    "signInActivityAvailable": true,
+    "warnings": [
+      "WRITE-CAPABLE SCOPES PRESENT: Application.ReadWrite.All, AppRoleAssignment.ReadWrite.All, DelegatedPermissionGrant.ReadWrite.All, RoleManagement.ReadWrite.Directory. The scanner never writes, but the token could. These scopes come from the existing consent grant on the 'Microsoft Graph Command Line Tools' enterprise app, so reconnecting will not remove them; revoke them on that grant in Entra if you want a read-only-only app."
+    ],
+    "counts": {
+      "identities": 89,
+      "applications": 11,
+      "servicePrincipals": 89,
+      "appOnly": 0,
+      "spOnly": 78,
+      "both": 11
+    }
+  },
+  "engine": {
+    "name": "Invoke-NhiScoring.ps1",
+    "version": "0.1.0"
+  },
+  "inputs": {
+    "inventoryFile": "inventory-20261011-143429Z.json",
+    "inventorySha256": "fd082a6241935dcf51427c8f388279893f09a032893c23981f19180e927b09f1",
+    "rulesFile": "risk-rules.json",
+    "rulesSha256": "4ba3e47c8a2bff101195da4ca56bae2721137cf87562a6a0745a262fdc1a2464",
+    "rulesSchemaVersion": "0.1.0-draft",
+    "scanStartUtc": "2026-10-11T14:34:29.000Z",
+    "inventoryScannerVersion": "0.1.0"
+  },
+  "scoring": {
+    "model": "additive tiers + named combination uplifts",
+    "tierPoints": {
+      "Critical": 40,
+      "High": 25,
+      "Medium": 10,
+      "Low": 3
+    },
+    "scoreCap": null
+  },
+  "identity": {
+    "appId": "0dff4417-335c-4ccd-81bd-21091e29f43d",
+    "displayName": "seed-03-expiring",
+    "ownerType": "ThisTenant",
+    "score": {
+      "base": 10,
+      "uplift": 0,
+      "total": 10,
+      "capApplied": false
+    },
+    "findings": [
+      {
+        "ruleId": "NHI-007",
+        "name": "Active client secret in use",
+        "severity": "Medium",
+        "points": 10,
+        "nist": [
+          "IA-5"
+        ],
+        "evidence": [
+          {
+            "credentialType": "secret",
+            "onObject": "application",
+            "keyId": "b9291b82-585b-401d-adc0-28c290b69bcc",
+            "displayName": "nhi-lab-seed secret (value discarded)",
+            "startDateTime": "2026-10-11T13:02:51.150Z",
+            "endDateTime": "2026-10-12T13:02:51.150Z",
+            "expiredAtScan": false,
+            "lifetimeDays": 1
+          }
+        ]
+      }
+    ],
+    "uplifts": []
+  }
+}

@@ -1,0 +1,18 @@
+NHI scoring  engine 0.1.0
+  inventory : inventory-20261012-130643Z.json
+  scan start: 2026-10-12T13:06:43.000Z  (the clock used for every rule)
+  identities: 89 scored, 9 with findings, max score 85
+  skipped   : NHI-006 (deferred)
+  warnings  : 0
+
+Rank Score Base Uplift Owner      Name                       Rules
+---- ----- ---- ------ -----      ----                       -----
+   1    85   70     15 ThisTenant seed-09-worstcase          NHI-001,NHI-002,NHI-004,NHI-007
+   2    40   40      0 ThisTenant seed-06-appadmin           NHI-005
+   3    35   35      0 ThisTenant seed-05-dirwrite           NHI-001,NHI-004
+   4    25   25      0 ThisTenant seed-04-mailread-app       NHI-004
+   5    20   20      0 ThisTenant seed-02-longsecret         NHI-002,NHI-007
+   6    10   10      0 ThisTenant seed-01-ownerless          NHI-001
+   7    10   10      0 ThisTenant seed-11-sp-secret          NHI-007
+   8     3    3      0 ThisTenant seed-03-expiring           NHI-003
+   9     3    3      0 ThisTenant seed-08-mailread-delegated NHI-008

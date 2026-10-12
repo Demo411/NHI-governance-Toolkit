@@ -1,4 +1,5 @@
 #Requires -Version 7.0
+#Requires -Modules @{ ModuleName='Pester'; ModuleVersion='5.0'; MaximumVersion='5.99.99' }
 <#
 .SYNOPSIS
     Runs every *.Tests.ps1 in this folder with Pester 5.x.

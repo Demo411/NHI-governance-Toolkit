@@ -334,6 +334,12 @@ pwsh tests/Invoke-Tests.ps1        # needs Pester 5.x; no tenant required
 - The clock is the inventory's `scanStartUtc`; the machine clock is never read, and a missing
   `scanStartUtc` is an error. The output has no generation timestamp, so the same inputs give
   byte-identical output.
+- Identities are ordered by `Sort-Object` with three keys: total score descending, then
+  `displayName` ascending, then `appId` ascending. The order is therefore fully determined by
+  the data: equal scores never fall back to input order. `Sort-Object` compares strings
+  case-insensitively using the current culture, so two machines with very different culture
+  settings could in principle order unusual display names differently; the scores and
+  findings would still be identical.
 - Rules run only on identities whose `ownerType` the rule covers; rules whose status is not
   `active` are skipped and listed under `skippedRules`.
 - Each finding records its rule id, severity, points and the exact triggering items: credential

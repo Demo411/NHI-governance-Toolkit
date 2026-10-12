@@ -6,3 +6,6 @@ reports/raw/
 
 # Inventory output contains tenant data
 output/
+
+# Local-only notes (real tenant identifiers)
+CLAUDE.local.md
