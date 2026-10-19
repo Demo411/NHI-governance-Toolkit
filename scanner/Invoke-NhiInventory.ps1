@@ -15,6 +15,8 @@
          (application permissions), oauth2 permission grants (delegated consent),
          directory role assignments (active + PIM eligible), sign-in activity.
       4. Merge everything into ONE record per appId and write it as JSON.
+      5. (Phase 4) Recognise Entra Agent ID objects from their Graph @odata.type, record each
+         agent's parent blueprint and the sponsors of blueprints and agents.
 
     Every Graph call goes through Invoke-GraphGet below, which hard-codes -Method GET.
     That is the single choke point guaranteeing the scanner cannot write to the tenant.
@@ -36,7 +38,7 @@ $ErrorActionPreference = 'Stop'
 # 90-day inactivity, etc.) must evaluate against scanStartUtc, never the wall clock
 # at scoring time, so re-scoring the same file always gives the same answer.
 $scanStart = (Get-Date).ToUniversalTime()
-$ScannerVersion = '0.1.0'
+$ScannerVersion = '0.2.0'
 $warnings = [System.Collections.Generic.List[string]]::new()
 
 function Add-ScanWarning {
@@ -126,6 +128,53 @@ function Get-Owners {
     }
 }
 
+# Agent ID @odata.type values, as returned by Graph v1.0 (confirmed in the lab, Phase 4 probe).
+$TypeBlueprint          = '#microsoft.graph.agentIdentityBlueprint'
+$TypeBlueprintPrincipal = '#microsoft.graph.agentIdentityBlueprintPrincipal'
+$TypeAgentIdentity      = '#microsoft.graph.agentIdentity'
+
+# Whitelist projection, like owners. accountEnabled is filled in per user below, because the
+# sponsors endpoint returns a user's default properties and accountEnabled is not one of them.
+function ConvertTo-SafeSponsor {
+    param($Sponsor, $AccountEnabled)
+    [ordered]@{
+        id                = $Sponsor['id']
+        type              = $Sponsor['@odata.type']
+        displayName       = $Sponsor['displayName']
+        userPrincipalName = $Sponsor['userPrincipalName']
+        accountEnabled    = $AccountEnabled   # null for groups, or if the user lookup failed
+    }
+}
+
+# Sponsors of a blueprint (on the application) or an agent (on the service principal).
+# Same null contract as Get-Owners: @() = confirmed none, $null = we don't know.
+$accountEnabledCache = @{}
+function Get-Sponsors {
+    param([ValidateSet('blueprint', 'agent')][string]$Kind, [string]$ObjectId, [string]$Label)
+    $path = if ($Kind -eq 'blueprint') { "applications/$ObjectId/microsoft.graph.agentIdentityBlueprint/sponsors" }
+            else                       { "servicePrincipals/$ObjectId/microsoft.graph.agentIdentity/sponsors" }
+    try {
+        $raw = Get-GraphPaged "https://graph.microsoft.com/v1.0/$path"
+        $out = foreach ($s in @($raw | Where-Object { $null -ne $_ })) {
+            $enabled = $null
+            if ($s['@odata.type'] -eq '#microsoft.graph.user') {
+                $uid = $s['id']
+                if (-not $accountEnabledCache.ContainsKey($uid)) {
+                    try   { $accountEnabledCache[$uid] = (Invoke-GraphGet "https://graph.microsoft.com/v1.0/users/$uid`?`$select=id,accountEnabled")['accountEnabled'] }
+                    catch { Add-ScanWarning "accountEnabled lookup failed for sponsor $uid of $Label`: $($_.Exception.Message)"; $accountEnabledCache[$uid] = $null }
+                }
+                $enabled = $accountEnabledCache[$uid]
+            }
+            ConvertTo-SafeSponsor $s $enabled
+        }
+        return , @($out)
+    }
+    catch {
+        Add-ScanWarning "Sponsors lookup failed for $Label ($ObjectId): $($_.Exception.Message)"
+        return $null
+    }
+}
+
 # ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
@@ -162,10 +211,13 @@ $rawApps = Get-GraphPaged "https://graph.microsoft.com/v1.0/applications?`$selec
 $applications = @{}   # appId -> projected application object
 foreach ($a in $rawApps) {
     $label = "application '$($a['displayName'])'"
+    $isBlueprint = ($a['@odata.type'] -eq $TypeBlueprint)
     $applications[$a['appId'].ToLower()] = [ordered]@{
         id                  = $a['id']
         appId               = $a['appId']
         displayName         = $a['displayName']
+        # Graph returns @odata.type per item even with $select; it is how a blueprint is told apart.
+        odataType           = $a['@odata.type']
         createdDateTime     = ConvertTo-IsoUtc $a['createdDateTime']
         signInAudience      = $a['signInAudience']
         tags                = @($a['tags'])
@@ -174,6 +226,10 @@ foreach ($a in $rawApps) {
         keyCredentials      = @($a['keyCredentials'] | Where-Object { $null -ne $_ } | ForEach-Object { ConvertTo-SafeKeyCredential $_ })
         # Requested permissions only (what the app asks for), NOT what was granted.
         requiredResourceAccess = @($a['requiredResourceAccess'])
+    }
+    # Only blueprints carry sponsors on the application, so only they get the key.
+    if ($isBlueprint) {
+        $applications[$a['appId'].ToLower()]['sponsors'] = Get-Sponsors -Kind blueprint -ObjectId $a['id'] -Label $label
     }
 }
 
@@ -188,6 +244,17 @@ $rawSps = Get-GraphPaged "https://graph.microsoft.com/v1.0/servicePrincipals?`$s
 # resourceRoleMap: resource SP id -> @{ appRoleId -> permission value }. Every resource an
 # app role can point at is itself a service principal in this tenant, so the list we
 # just pulled already contains everything needed - no per-resource lookups.
+# Agent identities: the parent link (agentIdentityBlueprintId) is a property of the
+# agentIdentity type, so it is read from the type-cast collection rather than added to the
+# base $select above. Same paging, same GET-only helper.
+$blueprintIdByAgentSpId = @{}
+try {
+    foreach ($ag in (Get-GraphPaged 'https://graph.microsoft.com/v1.0/servicePrincipals/microsoft.graph.agentIdentity?$select=id,agentIdentityBlueprintId&$top=999')) {
+        $blueprintIdByAgentSpId[$ag['id']] = $ag['agentIdentityBlueprintId']
+    }
+}
+catch { Add-ScanWarning "Agent identity parent links unavailable (continuing without them): $($_.Exception.Message)" }
+
 $spNameById = @{}
 $resourceRoleMap = @{}
 foreach ($s in $rawSps) {
@@ -326,6 +393,13 @@ foreach ($s in $rawSps) {
         oauth2PermissionGrants = @($grantsByClient[$spId] | Where-Object { $null -ne $_ })
         directoryRoles         = @($rolesByPrincipal[$spId] | Where-Object { $null -ne $_ })
         signInActivity         = if ($signInActivityAvailable) { $signInByAppId[$appIdKey] } else { $null }
+        odataType              = $s['@odata.type']
+    }
+    # Agent identities: parent blueprint (its appId) and sponsors. Agents have no application
+    # object, so the service principal is the only place these can live.
+    if ($s['@odata.type'] -eq $TypeAgentIdentity) {
+        $servicePrincipals[$appIdKey]['agentIdentityBlueprintId'] = $blueprintIdByAgentSpId[$spId]
+        $servicePrincipals[$appIdKey]['sponsors'] = Get-Sponsors -Kind agent -ObjectId $spId -Label $label
     }
 }
 Write-Progress -Activity 'Service principal details' -Completed
@@ -356,6 +430,15 @@ function Get-OwnerType {
     return 'Unknown'   # never guess
 }
 
+# identityType comes from Graph's own @odata.type, never from names or tags.
+function Get-IdentityType {
+    param($App, $Sp)
+    if ($Sp -and $Sp.odataType -eq $TypeAgentIdentity) { return 'agentIdentity' }
+    if ($App -and $App.odataType -eq $TypeBlueprint) { return 'agentBlueprint' }
+    if ($Sp -and $Sp.odataType -eq $TypeBlueprintPrincipal) { return 'agentBlueprintPrincipal' }   # blueprint app lives in another tenant
+    return 'application'
+}
+
 $allAppIds = @($applications.Keys) + @($servicePrincipals.Keys) | Sort-Object -Unique
 $identities = foreach ($key in $allAppIds) {
     $app = $applications[$key]
@@ -364,11 +447,24 @@ $identities = foreach ($key in $allAppIds) {
         appId            = if ($app) { $app.appId } else { $sp.appId }
         displayName      = if ($app) { $app.displayName } else { $sp.displayName }
         ownerType        = Get-OwnerType $sp
+        identityType     = Get-IdentityType $app $sp
         application      = $app
         servicePrincipal = $sp
     }
 }
 $identities = @($identities)
+
+# Agents come back with appOwnerOrganizationId = null (lab probe, Phase 4), which Get-OwnerType
+# reports as Unknown. An agent can only exist under a blueprint, so it inherits the blueprint's
+# ownerType (project owner's decision). No parent in the inventory = stays Unknown, with a warning.
+$byAppId = @{}
+foreach ($id in $identities) { $byAppId[([string]$id.appId).ToLower()] = $id }
+foreach ($id in @($identities | Where-Object { $_.identityType -eq 'agentIdentity' })) {
+    $parentAppId = [string]$id.servicePrincipal.agentIdentityBlueprintId
+    $parent = if ($parentAppId) { $byAppId[$parentAppId.ToLower()] } else { $null }
+    if ($parent) { $id.ownerType = $parent.ownerType }
+    else { Add-ScanWarning "Agent '$($id.displayName)' names blueprint '$parentAppId', which is not in the inventory; ownerType left as $($id.ownerType)." }
+}
 
 $both = @($identities | Where-Object { $_.application -and $_.servicePrincipal }).Count
 $appOnly = @($identities | Where-Object { $_.application -and -not $_.servicePrincipal }).Count
@@ -393,6 +489,8 @@ $inventory = [ordered]@{
             appOnly           = $appOnly
             spOnly            = $spOnly
             both              = $both
+            agentBlueprints   = @($identities | Where-Object { $_.identityType -eq 'agentBlueprint' }).Count
+            agentIdentities   = @($identities | Where-Object { $_.identityType -eq 'agentIdentity' }).Count
         }
     }
     identities   = $identities
@@ -410,6 +508,7 @@ Write-Host ''
 Write-Host '=== NHI inventory complete ===' -ForegroundColor Cyan
 Write-Host "Tenant:        $tenantId"
 Write-Host "Identities:    $($c.identities)  (apps $($c.applications), SPs $($c.servicePrincipals); both $($c.both), app-only $($c.appOnly), SP-only $($c.spOnly))"
+Write-Host "Agent ID:      $($c.agentBlueprints) blueprint(s), $($c.agentIdentities) agent identit(ies)"
 Write-Host "Sign-in data:  $signInActivityAvailable"
 Write-Host "Write scopes:  $writeScopesPresent"
 Write-Host "Warnings:      $($warnings.Count)"

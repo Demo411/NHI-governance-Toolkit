@@ -104,6 +104,22 @@ Describe 'Validator guard rails' {
         $v.ExitCode | Should -Be 1 -Because $v.Output
         $v.Output | Should -Match 'INTEGRITY'
     }
+    It 'Phase 4: an untagged agent counts as a seed through its tagged blueprint (parent link, not name)' {
+        $bp = New-SynBlueprint -Name 'bp-seed' -Tags @('nhi-lab-seed')
+        $agent = New-SynAgent -Name 'agent-seed' -ParentAppId $bp.appId
+        $key = New-SynAnswerKey -Directory (Join-Path $TestDrive 'keyAg') -Apps @{ 'bp-seed' = @{ expected_rules = @() }; 'agent-seed' = @{ expected_rules = @() } }
+        $c = Invoke-Case -Name 'agentInherit' -Identities @($bp, $agent) -Key $key
+        $c.Val.ExitCode | Should -Be 0 -Because $c.Val.Output
+        $c.Val.Output | Should -Match '1 agent\(s\) through their tagged blueprint'
+    }
+    It 'Phase 4: an agent under an UNTAGGED blueprint is not a seed, even when named like one' {
+        $bp = New-SynBlueprint -Name 'bp-not-seed'
+        $agent = New-SynAgent -Name 'agent-seed' -ParentAppId $bp.appId
+        $key = New-SynAnswerKey -Directory (Join-Path $TestDrive 'keyAgNo') -Apps @{ 'agent-seed' = @{ expected_rules = @() } }
+        $c = Invoke-Case -Name 'agentNoInherit' -Identities @($bp, $agent) -Key $key
+        $c.Val.ExitCode | Should -Be 1 -Because $c.Val.Output
+        $c.Val.Output | Should -Match 'no identity tagged'
+    }
     It 'FAILS a score constraint that does not hold' {
         $seed = New-SynIdentity -Name 'seed-03-expiring' -Tags @('nhi-lab-seed') -AppSecrets @($script:secretG)
         $constraint = [ordered]@{ id = 'CX'; text = 'score(seed-03-expiring) > 50'; type = 'greater_than'; subject = 'seed-03-expiring'; value = 50 }

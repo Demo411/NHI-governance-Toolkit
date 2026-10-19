@@ -52,6 +52,16 @@ function New-SynRole {
     [ordered]@{ roleDefinitionId = $RoleDefinitionId; roleName = $RoleName; directoryScopeId = '/'; assignmentType = $AssignmentType }
 }
 
+# A sponsor as the scanner projects it. Type 'user' or 'group'; accountEnabled only for users.
+function New-SynSponsor {
+    param([ValidateSet('user', 'group')][string]$Type = 'user', [bool]$Enabled = $true, [string]$Upn = 'sponsor@lab.test')
+    [ordered]@{
+        id = [guid]::NewGuid().ToString(); type = "#microsoft.graph.$Type"; displayName = "synthetic $Type"
+        userPrincipalName = if ($Type -eq 'user') { $Upn } else { $null }
+        accountEnabled = if ($Type -eq 'user') { $Enabled } else { $null }
+    }
+}
+
 function New-SynIdentity {
     param(
         [Parameter(Mandatory)][string]$Name,
@@ -67,7 +77,13 @@ function New-SynIdentity {
         [object[]]$Grants = @(),
         [object[]]$Roles = @(),
         [string[]]$Tags = @(),
-        [switch]$NoApplication
+        [switch]$NoApplication,
+        # Phase 4 (Agent ID). Omit -IdentityType to build an old-style record with no identityType.
+        [ValidateSet('', 'application', 'agentBlueprint', 'agentBlueprintPrincipal', 'agentIdentity')][string]$IdentityType = '',
+        [string]$ParentAppId = '',
+        # $null = sponsor lookup failed (unknown); @() = confirmed no sponsors.
+        [object[]]$Sponsors = @(),
+        [switch]$SponsorsUnknown
     )
     $ownerList = @()
     if ($Owners -gt 0) { $ownerList = @(1..$Owners | ForEach-Object { [ordered]@{ id = [guid]::NewGuid().ToString() } }) }
@@ -78,7 +94,7 @@ function New-SynIdentity {
             owners = $ownerList; passwordCredentials = @($AppSecrets); keyCredentials = @($AppCerts)
         }
     }
-    [ordered]@{
+    $record = [ordered]@{
         appId = $AppId; displayName = $Name; ownerType = $OwnerType
         application = $application
         servicePrincipal = [ordered]@{
@@ -89,6 +105,40 @@ function New-SynIdentity {
             signInActivity = $null
         }
     }
+    if ($IdentityType) {
+        $record.Insert(3, 'identityType', $IdentityType)
+        # Plain assignment, not "$x = if (...) { @() }": an if-expression unrolls an empty array to $null.
+        $sponsorValue = @($Sponsors)
+        if ($SponsorsUnknown) { $sponsorValue = $null }
+        # Same shape as the real scanner: blueprints keep sponsors on the application, agents on
+        # the service principal (they have no application object).
+        if ($IdentityType -eq 'agentBlueprint' -and $null -ne $application) { $application['sponsors'] = $sponsorValue }
+        if ($IdentityType -eq 'agentIdentity') {
+            $record.servicePrincipal.servicePrincipalType = 'ServiceIdentity'
+            $record.servicePrincipal['agentIdentityBlueprintId'] = $ParentAppId
+            $record.servicePrincipal['sponsors'] = $sponsorValue
+        }
+    }
+    $record
+}
+
+# Agent ID shorthands. A blueprint is an application + blueprint principal (one record);
+# an agent is a service principal only, pointing at its blueprint's appId.
+function New-SynBlueprint {
+    param([Parameter(Mandatory)][string]$Name, [object[]]$AppSecrets = @(), [object[]]$AppCerts = @(),
+          [object[]]$Sponsors = @(New-SynSponsor), [switch]$SponsorsUnknown, [int]$Owners = 1, [string[]]$Tags = @(),
+          [object[]]$AppRoleAssignments = @())
+    New-SynIdentity -Name $Name -IdentityType agentBlueprint -AppSecrets $AppSecrets -AppCerts $AppCerts `
+        -Sponsors $Sponsors -SponsorsUnknown:$SponsorsUnknown -Owners $Owners -Tags $Tags -AppRoleAssignments $AppRoleAssignments
+}
+function New-SynAgent {
+    param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$ParentAppId,
+          [object[]]$AppRoleAssignments = @(), [object[]]$Roles = @(), [object[]]$Sponsors = @(New-SynSponsor),
+          [switch]$SponsorsUnknown, [string[]]$Tags = @(), [object[]]$SpSecrets = @())
+    # Agent identities: id == appId (Agent ID design), no application object, no owners.
+    $id = [guid]::NewGuid().ToString()
+    New-SynIdentity -Name $Name -AppId $id -SpId $id -IdentityType agentIdentity -ParentAppId $ParentAppId -NoApplication -Owners 0 `
+        -AppRoleAssignments $AppRoleAssignments -Roles $Roles -Sponsors $Sponsors -SponsorsUnknown:$SponsorsUnknown -Tags $Tags -SpSecrets $SpSecrets
 }
 
 # Microsoft Graph's own service principal, so resourceId can resolve to the real Graph appId.

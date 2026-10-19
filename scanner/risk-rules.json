@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "0.1.0-draft",
+  "schemaVersion": "0.2.0-draft",
   "description": "NHI risk rules. Declarative only: the scoring engine (scanner/Invoke-NhiScoring.ps1) reads this file plus an inventory JSON. Points come from scoring.tierPoints via each rule's severity; rules never carry their own numbers, so there is one place to change a weight.",
 
   "evaluation": {
@@ -17,6 +17,26 @@
       "source": "identities[].ownerType, assigned by the Phase 2 scanner (ManagedIdentity is decided first, then appOwnerOrganizationId against this tenant and the Microsoft tenants).",
       "policy": "Every rule covers every type unless its appliesToReason states why not. Unknown is never excluded ('never guess'). Only NHI-001 excludes anything (Microsoft, ManagedIdentity)."
     },
+    "identityTypes": {
+      "values": ["application", "agentBlueprint", "agentBlueprintPrincipal", "agentIdentity"],
+      "source": "identities[].identityType, assigned by the Phase 2 scanner (v0.2.0+) from the Graph @odata.type of the application and service principal. Inventories written before v0.2.0 have no identityType; the engine treats a missing value as 'application'.",
+      "meaning": {
+        "application": "Classic app registration and/or service principal, including managed identities and Microsoft first-party apps.",
+        "agentBlueprint": "Entra Agent ID blueprint (application @odata.type #microsoft.graph.agentIdentityBlueprint), merged by appId with its blueprint principal. Holds the credentials every child agent uses.",
+        "agentBlueprintPrincipal": "A blueprint principal (#microsoft.graph.agentIdentityBlueprintPrincipal) whose blueprint application is not in this tenant (a multitenant blueprint published elsewhere).",
+        "agentIdentity": "An agent identity (#microsoft.graph.agentIdentity): service principal only, no credentials of its own; its parent is servicePrincipal.agentIdentityBlueprintId."
+      },
+      "policy": "A rule with appliesTo.identityType runs only on those types; a rule without it runs on every type. NHI-001, NHI-007, NHI-009, NHI-010 and NHI-011 restrict identityType, each with its reason in appliesToReason."
+    },
+    "parentLink": {
+      "field": "identities[].servicePrincipal.agentIdentityBlueprintId",
+      "meaning": "The appId of the agent's blueprint. The engine indexes identities by appId and resolves each agent to its parent. An agent whose parent is not in the inventory gets an unresolvedBlueprint warning and cannot take part in cross-identity combinations."
+    },
+    "sponsors": {
+      "source": "application.sponsors (blueprints) and servicePrincipal.sponsors (agents), collected by the scanner from the v1.0 .../microsoft.graph.agentIdentityBlueprint/sponsors and .../microsoft.graph.agentIdentity/sponsors endpoints.",
+      "null": "null means the lookup failed (unknown); [] means confirmed no sponsors. A null list never fires a rule; it records a sponsorLookupUnknown warning instead ('never guess').",
+      "enabled": "A user sponsor counts only when accountEnabled is true. A group sponsor counts as accountable, because group membership is not inventoried."
+    },
     "resourceResolution": {
       "graphAppId": "00000003-0000-0000-c000-000000000000",
       "method": "Build an index of identities[].servicePrincipal.id -> identities[].appId from the inventory. For each appRoleAssignments[] / oauth2PermissionGrants[] entry, look up resourceId in that index and compare the resolved appId. resourceDisplayName is a label only and is never used to decide a match.",
@@ -31,7 +51,8 @@
     "tierPoints": { "Critical": 40, "High": 25, "Medium": 10, "Low": 3 },
     "scoreCap": null,
     "scoreCapNote": "DECIDED: no cap. Scores rank identities and a cap would flatten the top of the ranking. Theoretical max is 131 (001:10 + 002:10 + 003:3 + 004:40 + 005:40 + 007:10 + 008:3 = 116, plus the 15-point uplift), so scores are not a 0-100 scale.",
-    "singleFindingRule": "An identity with exactly one finding scores exactly tierPoints[severity]. Combination uplifts can never fire on a single finding (seed-11 constraint)."
+    "singleFindingRule": "An identity with exactly one finding scores exactly tierPoints[severity]. Combination uplifts can never fire on a single finding (seed-11 constraint). COMBO-U3 is the one cross-identity uplift: it needs a finding on the blueprint AND one on a child agent, so it still never fires on a single finding.",
+    "agentRollup": "Context only (project owner's decision): each blueprint lists agentCount and its worst-scoring child, and each agent names its parent. The roll-up never adds points; COMBO-U3 already scores the dangerous case."
   },
 
   "rules": [
@@ -40,8 +61,8 @@
       "name": "No owner / sponsor",
       "status": "active",
       "severity": "Medium",
-      "appliesTo": { "ownerType": ["ThisTenant", "ThirdParty", "Unknown"] },
-      "appliesToReason": "Excludes Microsoft first-party (never owned by tenant users; ~78 meaningless findings) and ManagedIdentity (no owner concept; its lifecycle follows the Azure resource it is attached to). ThirdParty is included on purpose: ownerless consented SaaS apps are a real AC-2 gap, and will be noisy. Unknown is never excluded.",
+      "appliesTo": { "ownerType": ["ThisTenant", "ThirdParty", "Unknown"], "identityType": ["application", "agentBlueprint", "agentBlueprintPrincipal"] },
+      "appliesToReason": "Excludes Microsoft first-party (never owned by tenant users; ~78 meaningless findings) and ManagedIdentity (no owner concept; its lifecycle follows the Azure resource it is attached to). ThirdParty is included on purpose: ownerless consented SaaS apps are a real AC-2 gap, and will be noisy. Unknown is never excluded. Agent identities are excluded: Entra models their accountability as a sponsor, not an owner (the seed agents have a sponsor and no owner), so NHI-011 covers them. Blueprints stay in scope: they are application objects and do have owners.",
       "logic": "application.owners and servicePrincipal.owners are both empty (or absent).",
       "rationale": "Nobody is accountable for the identity: no one to ask what it is for, rotate its credentials, or approve its removal. This is a governance gap, not by itself exploitable.",
       "nist": ["AC-2"],
@@ -157,8 +178,8 @@
       "name": "Active client secret in use",
       "status": "active",
       "severity": "Medium",
-      "appliesTo": { "ownerType": ["ThisTenant", "Microsoft", "ThirdParty", "ManagedIdentity", "Unknown"] },
-      "appliesToReason": "All types: a live secret on any service principal in this tenant is a usable credential, including hidden credentials on third-party or Microsoft service principals.",
+      "appliesTo": { "ownerType": ["ThisTenant", "Microsoft", "ThirdParty", "ManagedIdentity", "Unknown"], "identityType": ["application", "agentBlueprintPrincipal", "agentIdentity"] },
+      "appliesToReason": "All owner types: a live secret on any service principal in this tenant is a usable credential, including hidden credentials on third-party or Microsoft service principals. Blueprints are excluded because NHI-009 scores an active blueprint secret at a higher tier; counting both would score one secret twice.",
       "logic": "Any client secret (passwordCredentials, on application OR servicePrincipal) with endDateTime > scanStartUtc. Certificates do not count.",
       "rationale": "A usable shared secret can be copied, leaked and replayed. Microsoft says client secrets should not be used in production. This is the 'armed' half of the combination uplift.",
       "nist": ["IA-5"],
@@ -187,6 +208,45 @@
       "nist": ["AC-6"],
       "remediation": "Revoke the tenant-wide grant; require per-user consent or narrower scopes.",
       "references": ["ms-graph-permissions"]
+    },
+    {
+      "id": "NHI-009",
+      "name": "Active client secret on an agent identity blueprint",
+      "status": "active",
+      "severity": "High",
+      "appliesTo": { "ownerType": ["ThisTenant", "Microsoft", "ThirdParty", "ManagedIdentity", "Unknown"], "identityType": ["agentBlueprint"] },
+      "appliesToReason": "Blueprints only. It replaces NHI-007 on blueprints (NHI-007 excludes agentBlueprint), so one secret is never scored twice.",
+      "logic": "Any client secret (passwordCredentials, on application OR servicePrincipal) with endDateTime > scanStartUtc, on an identity whose identityType is agentBlueprint. Certificates do not count.",
+      "rationale": "Agent identities have no credentials of their own; the blueprint's credential is used to get tokens for every agent created from it. One leaked blueprint secret therefore reaches every child agent, which is why this is High where an ordinary app secret (NHI-007) is Medium. Microsoft says client secrets should not be used as blueprint credentials in production.",
+      "nist": ["IA-5"],
+      "remediation": "Replace the secret with a managed identity used as a federated identity credential (Microsoft's preferred option) or a certificate, then delete the secret.",
+      "references": ["ms-agent-identities", "ms-agent-autonomous-flow"]
+    },
+    {
+      "id": "NHI-010",
+      "name": "Agent identity blueprint has no enabled sponsor",
+      "status": "active",
+      "severity": "Medium",
+      "appliesTo": { "ownerType": ["ThisTenant", "Microsoft", "ThirdParty", "ManagedIdentity", "Unknown"], "identityType": ["agentBlueprint"] },
+      "appliesToReason": "Blueprints only. Ownership of the blueprint application is already NHI-001; this rule checks the sponsor, the human Entra records as accountable for the agent type.",
+      "logic": "application.sponsors is a list (not null) containing no group and no user with accountEnabled == true. Covers both 'no sponsor' and 'only disabled sponsors'.",
+      "rationale": "A sponsor is who Microsoft says to contact in a security incident. A blueprint whose only sponsors are disabled accounts (a leaver) has nobody to answer for every agent under it.",
+      "nist": ["AC-2"],
+      "remediation": "Add an active user or a supported group as sponsor; remove disabled sponsors.",
+      "references": ["ms-agent-identities", "ms-create-blueprint"]
+    },
+    {
+      "id": "NHI-011",
+      "name": "Agent identity has no enabled sponsor",
+      "status": "active",
+      "severity": "Medium",
+      "appliesTo": { "ownerType": ["ThisTenant", "Microsoft", "ThirdParty", "ManagedIdentity", "Unknown"], "identityType": ["agentIdentity"] },
+      "appliesToReason": "Agent identities only. Replaces NHI-001 for agents, whose accountability is a sponsor, not an owner.",
+      "logic": "servicePrincipal.sponsors is a list (not null) containing no group and no user with accountEnabled == true.",
+      "rationale": "Sponsors are optional on agent identities, so an agent can exist with no accountable human. Same AC-2 gap as NHI-001, in Agent ID's own model.",
+      "nist": ["AC-2"],
+      "remediation": "Assign an active user or a supported group as the agent's sponsor.",
+      "references": ["ms-agent-identities"]
     }
   ],
 
@@ -195,10 +255,23 @@
       "id": "COMBO-U1",
       "name": "Armed privilege",
       "status": "active",
-      "requires": { "anyOf": ["NHI-004", "NHI-005"], "allOf": ["NHI-007"] },
+      "requires": { "allOfAny": [["NHI-004", "NHI-005"], ["NHI-007", "NHI-009"]] },
+      "requiresNote": "allOfAny: every inner list needs at least one fired rule. NHI-009 is the blueprint form of NHI-007 (an active secret, scored as a blueprint secret), so it arms the uplift the same way.",
       "uplift": 15,
       "appliesOnce": true,
       "rationale": "Privilege is only dangerous to the extent someone can authenticate as the identity. An active client secret is a usable credential. NHI-002 is deliberately NOT in the condition: it can fire on an expired secret, which proves nothing about current usability.",
+      "nist": ["AC-6", "IA-5"]
+    },
+    {
+      "id": "COMBO-U3",
+      "name": "Shared credential over a privileged agent",
+      "status": "active",
+      "scope": "crossIdentity",
+      "requires": { "self": ["NHI-009"], "anyChild": ["NHI-004", "NHI-005"] },
+      "uplift": 15,
+      "appliesTo": "the blueprint",
+      "appliesOnce": true,
+      "rationale": "Agent ID splits what COMBO-U1 needs across two records: the active secret sits on the blueprint and the privilege on a child agent, so scored one identity at a time neither looks armed. The blueprint's secret can be exchanged for any child's token, so a blueprint with an active secret above a privileged agent is armed privilege. The uplift goes on the blueprint because that is where the credential, and the fix, live. It applies once however many children qualify.",
       "nist": ["AC-6", "IA-5"]
     }
   ],
@@ -252,6 +325,26 @@
       "title": "Directory.ReadWrite.All Is Not As Powerful As You Might Think",
       "url": "https://specterops.io/blog/2024/02/12/directory-readwrite-all-is-not-as-powerful-as-you-might-think/",
       "verifiedFor": "Third-party testing, 2024: see risk-model.md. Not Microsoft guidance; Graph behaviour can change."
+    },
+    "ms-agent-identities": {
+      "title": "Agent identities in Microsoft Entra Agent ID",
+      "url": "https://learn.microsoft.com/en-us/entra/agent-id/agent-identities",
+      "verifiedFor": "Agent identities have no credentials of their own and rely on the blueprint to acquire tokens; blueprint credentials can be FIC, certificates or client secrets; an agent can have a sponsor, the human or group accountable for it, used for example to contact someone in a security incident."
+    },
+    "ms-agent-autonomous-flow": {
+      "title": "Autonomous agent OAuth flow",
+      "url": "https://learn.microsoft.com/en-us/entra/agent-id/identity-platform/agent-autonomous-app-oauth-flow",
+      "verifiedFor": "The blueprint authenticates with its own credential and impersonates a child agent (fmi_path); managed identity is preferred; client secrets should not be used as blueprint credentials in production."
+    },
+    "ms-create-blueprint": {
+      "title": "Create an agent identity blueprint",
+      "url": "https://learn.microsoft.com/en-us/entra/agent-id/create-blueprint",
+      "verifiedFor": "A sponsor is required when creating a blueprint; an owner is optional."
+    },
+    "ms-agent-authorization": {
+      "title": "Authorization in Microsoft Entra Agent ID",
+      "url": "https://learn.microsoft.com/en-us/entra/agent-id/authorization-agent-id",
+      "verifiedFor": "Lists Graph permissions blocked for agents (Application.ReadWrite.All, RoleManagement.ReadWrite.All, User.ReadWrite.All, Directory.AccessAsUser.All) and says highly privileged directory roles cannot be assigned to agents. Lab observation 2026-10-16: Directory.ReadWrite.All was also refused for an agent identity; Mail.ReadWrite was accepted."
     },
     "nist-800-53": {
       "title": "NIST SP 800-53 Rev. 5 (Update 1)",

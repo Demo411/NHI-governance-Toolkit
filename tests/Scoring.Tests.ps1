@@ -322,3 +322,137 @@ Describe 'Output order is ordinal, not culture-sensitive' {
         $same[1] | Should -Be 'ffffffff-0000-0000-0000-000000000003'
     }
 }
+
+Describe 'Phase 4: Entra Agent ID (blueprints, agents, sponsors, COMBO-U3)' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestHelpers.ps1')
+        $start = '2026-10-01T00:00:00.000Z'
+        $script:ag = @{}
+        function Add-Ag { param($Key, $Identity) $script:ag[$Key] = $Identity.appId; $Identity }
+
+        # Mirrors the lab seed: a clean blueprint (cert) and a risky one (active secret), two agents each.
+        $clean = Add-Ag 'bpClean' (New-SynBlueprint -Name 'bp-clean' -AppCerts @(New-SynCredential -Start $start -End '2027-01-01T00:00:00.000Z'))
+        $risky = Add-Ag 'bpRisky' (New-SynBlueprint -Name 'bp-risky' -AppSecrets @(New-SynSecretForDays -Start $start -Days 179))
+        $ids = @(
+            $clean, $risky,
+            (Add-Ag 'clean1' (New-SynAgent -Name 'agent-clean-1' -ParentAppId $clean.appId -AppRoleAssignments @(New-SynAppRole 'User.Read.All'))),
+            (Add-Ag 'clean2' (New-SynAgent -Name 'agent-clean-2' -ParentAppId $clean.appId)),
+            (Add-Ag 'risky1' (New-SynAgent -Name 'agent-risky-1' -ParentAppId $risky.appId -AppRoleAssignments @(New-SynAppRole 'Mail.ReadWrite'))),
+            (Add-Ag 'risky2' (New-SynAgent -Name 'agent-risky-2' -ParentAppId $risky.appId))
+        )
+        # Blueprint secret but only harmless children: NHI-009 alone, no COMBO-U3.
+        $bpNoPriv = Add-Ag 'bpNoPriv' (New-SynBlueprint -Name 'bp-secret-harmless-kids' -AppSecrets @(New-SynSecretForDays -Start $start -Days 90))
+        $ids += $bpNoPriv
+        $ids += Add-Ag 'noPrivKid' (New-SynAgent -Name 'agent-harmless' -ParentAppId $bpNoPriv.appId)
+        # Privileged children but an EXPIRED blueprint secret: NHI-003, no NHI-009, no COMBO-U3.
+        $bpExpired = Add-Ag 'bpExpired' (New-SynBlueprint -Name 'bp-expired-secret' -AppSecrets @(New-SynSecretForDays -Start '2026-01-01T00:00:00.000Z' -Days 30))
+        $ids += $bpExpired
+        $ids += Add-Ag 'expKid' (New-SynAgent -Name 'agent-under-expired' -ParentAppId $bpExpired.appId -AppRoleAssignments @(New-SynAppRole 'Mail.ReadWrite'))
+        # Two privileged children: COMBO-U3 still adds 15 once, and lists both children.
+        $bpTwo = Add-Ag 'bpTwo' (New-SynBlueprint -Name 'bp-two-priv-kids' -AppSecrets @(New-SynSecretForDays -Start $start -Days 90))
+        $ids += $bpTwo
+        $ids += Add-Ag 'twoA' (New-SynAgent -Name 'agent-two-a' -ParentAppId $bpTwo.appId -AppRoleAssignments @(New-SynAppRole 'Mail.ReadWrite'))
+        $ids += Add-Ag 'twoB' (New-SynAgent -Name 'agent-two-b' -ParentAppId $bpTwo.appId -Roles @(New-SynRole -RoleDefinitionId '62e90394-69f5-4237-9190-012177145e10'))
+        # Sponsors.
+        $ids += Add-Ag 'bpLeaver'  (New-SynBlueprint -Name 'bp-leaver-sponsor' -Sponsors @(New-SynSponsor -Enabled $false -Upn 'leaver@lab.test'))
+        $ids += Add-Ag 'bpGroup'   (New-SynBlueprint -Name 'bp-group-sponsor' -Sponsors @(New-SynSponsor -Type group))
+        $ids += Add-Ag 'bpNoOwner' (New-SynBlueprint -Name 'bp-no-owner' -Owners 0)
+        $ids += Add-Ag 'noSponsor' (New-SynAgent -Name 'agent-no-sponsor' -ParentAppId $clean.appId -Sponsors @())
+        $ids += Add-Ag 'mixed'     (New-SynAgent -Name 'agent-mixed-sponsors' -ParentAppId $clean.appId -Sponsors @((New-SynSponsor -Enabled $false), (New-SynSponsor)))
+        $ids += Add-Ag 'unknownSp' (New-SynAgent -Name 'agent-sponsor-unknown' -ParentAppId $clean.appId -SponsorsUnknown)
+        # Orphan agent (parent not in the inventory) and a classic app (old record, no identityType).
+        $ids += Add-Ag 'orphan'    (New-SynAgent -Name 'agent-orphan' -ParentAppId 'ffffffff-0000-0000-0000-00000000dead' -AppRoleAssignments @(New-SynAppRole 'Mail.ReadWrite'))
+        $ids += Add-Ag 'classic'   (New-SynIdentity -Name 'classic-secret' -AppSecrets @(New-SynSecretForDays -Start $start -Days 90))
+
+        $inv = Write-SynInventory -Identities $ids -ScanStartUtc '2026-10-17T00:00:00Z' -Directory (Join-Path $TestDrive 'agent')
+        $script:ra = Invoke-SynEngine -InventoryPath $inv -OutputDirectory (Join-Path $TestDrive 'agent-out')
+        $script:raB = Invoke-SynEngine -InventoryPath $inv -OutputDirectory (Join-Path $TestDrive 'agent-out-b')
+        function Get-Ag { param($Key) Get-SynResult $script:ra $script:ag[$Key] }
+    }
+
+    It 'the engine ran' { $script:ra.ExitCode | Should -Be 0 -Because $script:ra.Output }
+
+    It 'active blueprint secret fires NHI-009 (High, 25) and NOT NHI-007' {
+        $r = Get-Ag 'bpRisky'
+        Format-Set (Get-SynRuleIds $r) | Should -Be 'NHI-009'
+        (Get-SynFinding $r 'NHI-009').points | Should -Be 25
+    }
+    It 'COMBO-U3: blueprint secret + privileged child adds 15 on the blueprint (25 + 15 = 40), naming the child' {
+        $r = Get-Ag 'bpRisky'
+        $r.score.base | Should -Be 25
+        $r.score.uplift | Should -Be 15
+        $r.score.total | Should -Be 40
+        $u = @($r.uplifts | Where-Object id -eq 'COMBO-U3')
+        $u.Count | Should -Be 1
+        Format-Set ($u[0].children | ForEach-Object appId) | Should -Be $script:ag['risky1']
+    }
+    It 'the privileged child is scored on its own permission only (NHI-004 High, 25), no uplift' {
+        $r = Get-Ag 'risky1'
+        Format-Set (Get-SynRuleIds $r) | Should -Be 'NHI-004'
+        $r.score.total | Should -Be 25
+    }
+    It 'agents with a sponsor and no owner do not fire NHI-001 (accountability is the sponsor)' {
+        foreach ($k in 'clean1', 'clean2', 'risky2') { Format-Set (Get-SynRuleIds (Get-Ag $k)) | Should -Be '' -Because $k }
+    }
+    It 'a clean blueprint (certificate only) scores 0' {
+        (Get-Ag 'bpClean').score.total | Should -Be 0
+    }
+    It 'blueprint secret with harmless children: NHI-009 only, no COMBO-U3' {
+        $r = Get-Ag 'bpNoPriv'
+        Format-Set (Get-SynRuleIds $r) | Should -Be 'NHI-009'
+        $r.score.total | Should -Be 25
+    }
+    It 'expired blueprint secret over a privileged child: NHI-003 only, no NHI-009, no COMBO-U3' {
+        $r = Get-Ag 'bpExpired'
+        Format-Set (Get-SynRuleIds $r) | Should -Be 'NHI-003'
+        @($r.uplifts).Count | Should -Be 0
+    }
+    It 'COMBO-U3 applies once with two privileged children (NHI-004 and NHI-005) and lists both' {
+        $r = Get-Ag 'bpTwo'
+        $r.score.uplift | Should -Be 15
+        Format-Set (@($r.uplifts | Where-Object id -eq 'COMBO-U3')[0].children | ForEach-Object appId) | Should -Be (Format-Set @($script:ag['twoA'], $script:ag['twoB']))
+    }
+    It 'NHI-010: a blueprint whose only sponsor is disabled fires (Medium, 10)' {
+        $r = Get-Ag 'bpLeaver'
+        Format-Set (Get-SynRuleIds $r) | Should -Be 'NHI-010'
+        (Get-SynFinding $r 'NHI-010').points | Should -Be 10
+    }
+    It 'NHI-010: a group sponsor counts as accountable' {
+        Format-Set (Get-SynRuleIds (Get-Ag 'bpGroup')) | Should -Be ''
+    }
+    It 'NHI-001 still covers blueprints (they are application objects with owners)' {
+        Format-Set (Get-SynRuleIds (Get-Ag 'bpNoOwner')) | Should -Be 'NHI-001'
+    }
+    It 'NHI-011: an agent with confirmed no sponsors fires; one enabled sponsor among disabled ones does not' {
+        Format-Set (Get-SynRuleIds (Get-Ag 'noSponsor')) | Should -Be 'NHI-011'
+        Format-Set (Get-SynRuleIds (Get-Ag 'mixed')) | Should -Be ''
+    }
+    It 'unknown sponsors (null) never fire NHI-011; they record a sponsorLookupUnknown warning' {
+        Format-Set (Get-SynRuleIds (Get-Ag 'unknownSp')) | Should -Be ''
+        @($script:ra.Findings.warnings | Where-Object { $_.code -eq 'sponsorLookupUnknown' -and $_.appId -eq $script:ag['unknownSp'] }).Count | Should -Be 1
+    }
+    It 'an agent whose blueprint is missing still gets its own findings, an unresolvedBlueprint warning and parentBlueprint.resolved = false' {
+        $r = Get-Ag 'orphan'
+        Format-Set (Get-SynRuleIds $r) | Should -Be 'NHI-004'
+        $r.parentBlueprint.resolved | Should -Be $false
+        @($script:ra.Findings.warnings | Where-Object { $_.code -eq 'unresolvedBlueprint' -and $_.appId -eq $script:ag['orphan'] }).Count | Should -Be 1
+    }
+    It 'roll-up is context only: agentCount and worstChild on the blueprint, parent on the agent, score unchanged' {
+        $bp = Get-Ag 'bpRisky'
+        $bp.agentRollup.agentCount | Should -Be 2
+        $bp.agentRollup.worstChild.appId | Should -Be $script:ag['risky1']
+        $bp.score.total | Should -Be ($bp.score.base + $bp.score.uplift)
+        (Get-Ag 'risky1').parentBlueprint.appId | Should -Be $script:ag['bpRisky']
+    }
+    It 'roll-up names no worstChild when every child scores 0' {
+        (Get-Ag 'bpNoPriv').agentRollup.worstChild | Should -BeNullOrEmpty
+    }
+    It 'a record with no identityType is treated as application (NHI-007 still fires on a classic secret)' {
+        $r = Get-Ag 'classic'
+        $r.identityType | Should -Be 'application'
+        Format-Set (Get-SynRuleIds $r) | Should -Be 'NHI-007'
+    }
+    It 'output with warnings and cross-identity results is byte-identical across runs' {
+        (Get-FileHash -LiteralPath $script:ra.Path).Hash | Should -Be (Get-FileHash -LiteralPath $script:raB.Path).Hash
+    }
+}

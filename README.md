@@ -18,7 +18,8 @@ Measured on the lab tenant (inventory `20261012-130643Z`):
 
 - **89 identities** scored (89 service principals, 11 of which also have an app registration in the tenant); **11 seeded identities** with a known expected outcome. 9 identities have findings, and all 9 are seeds.
 - **7 of 8 rules active** (NHI-006 deferred). All 11 seeds match the answer key and all 7 score constraints hold: `RESULT: PASS`.
-- **52 Pester tests** on synthetic inventories (no tenant needed), **mutation-checked**: loosening the NHI-002 boundary, the NHI-003 expiry comparison, the resolved-appId check, or the ordinal output ordering each makes tests fail.
+- **Phase 4 (Entra Agent ID), inventory `20261019-231744Z`:** 101 identities, including 2 agent blueprints and 4 agent identities. 17 seeds match the answer key and all 10 score constraints hold: `RESULT: PASS`. The risky blueprint (active secret above a `Mail.ReadWrite` agent) scores **40** (NHI-009 25 + COMBO-U3 15) and ranks second of all identities.
+- **73 Pester tests** on synthetic inventories (no tenant needed), **mutation-checked**: loosening the NHI-002 boundary, the NHI-003 expiry comparison, the resolved-appId check, or the ordinal output ordering each makes tests fail.
 - **Reproducibility demo:** `seed-03-expiring` has a 1-day secret. Scored on a scan taken before it expired it gets NHI-007 and **10** points; scored on a later scan it gets NHI-003 and **3**. Re-running the engine on the same inventory gives a findings file with the identical SHA-256, and across the two findings files `seed-03-expiring` was the only identity whose rules or score changed. See [`examples/`](examples/).
 
 ## Rules
@@ -33,10 +34,15 @@ Measured on the lab tenant (inventory `20261012-130643Z`):
 | NHI-006 | No sign-in in 90+ days | Medium, **deferred** (not scored) | AC-2 |
 | NHI-007 | Active client secret in use | Medium | IA-5 |
 | NHI-008 | Tenant-wide consent to a high-risk delegated permission | Low | AC-6 |
+| NHI-009 | Active client secret on an Entra Agent ID blueprint | High | IA-5 |
+| NHI-010 | Agent blueprint has no enabled sponsor | Medium | AC-2 |
+| NHI-011 | Agent identity has no enabled sponsor | Medium | AC-2 |
 
 ## Scoring
 
 Scores are additive by severity tier: Critical 40, High 25, Medium 10, Low 3, with no cap. Each rule fires at most once per identity. One combination uplift, **COMBO-U1 "armed privilege"**, adds 15 when an identity has a dangerous permission or role (NHI-004 or NHI-005) **and** an active client secret (NHI-007): a powerful identity that also has a working secret is exploitable right now; an expired secret does not qualify. An uplift for "ownerless plus privilege" was considered and rejected as a governance gap, not extra exploitability. Every weight and its reasoning is in [`docs/risk-model.md`](docs/risk-model.md).
+
+**Entra Agent ID (Phase 4).** An agent identity has no credentials of its own: its blueprint holds them and exchanges them for the agent's tokens. That splits "armed privilege" across two records (secret on the blueprint, permission on the agent), so a per-identity score misses it. **COMBO-U3** adds 15 to a blueprint that has an active secret (NHI-009) when any of its agents holds a high-risk permission or privileged role. Agents are judged on sponsors rather than owners, inherit their blueprint's owner type, and each blueprint lists its agent count and worst agent as context. Details and lab evidence (including a permission Entra refused to grant an agent) are in [`docs/risk-model.md`](docs/risk-model.md) section 9.
 
 ## Design decisions
 
@@ -90,6 +96,7 @@ Full list: [`docs/risk-model.md`](docs/risk-model.md) section 6 and [`TODO.md`](
 ├── README.md  LICENSE  TODO.md
 ├── seed/
 │   ├── New-NhiLabSeed.ps1        # creates 11 tagged lab identities (writes to the tenant)
+│   ├── New-AgentIdSeed.ps1       # Phase 4: 2 agent blueprints + 4 agent identities (writes)
 │   ├── Remove-NhiLabSeed.ps1     # removes only objects tagged nhi-lab-seed
 │   └── expected-findings.json    # answer key + score constraints
 ├── scanner/
@@ -104,7 +111,7 @@ Full list: [`docs/risk-model.md`](docs/risk-model.md) section 6 and [`TODO.md`](
 
 ## Roadmap
 
-- **Phase 4:** Entra Agent ID. Create an agent identity (blueprint, agent, sponsor) and confirm the scanner inventories it, records its sponsor and permissions, and scores it correctly.
+- **Phase 4 (done):** Entra Agent ID. 2 blueprints and 4 agent identities seeded, inventoried with sponsors and parent links, scored (NHI-009/010/011, COMBO-U3) and validated: live inventory `20261019-231744Z`, `RESULT: PASS`.
 - **Phase 5:** replace one app's client secret with GitHub Actions OIDC workload identity federation, then re-scan for a before/after.
 - **Phase 6:** controls mapping, architecture diagram, write-up.
 

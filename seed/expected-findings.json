@@ -7,7 +7,10 @@
     "The validator checks seed identities only, identified by the 'nhi-lab-seed' tag in application.tags or servicePrincipal.tags, never by display name (notes are not captured in the inventory, so tags are the only marker). The keys in 'apps' below are display names used purely as labels to look up which expectations apply to a tag-verified seed; a name never decides whether an identity is a seed. The validator must fail if a tagged identity has no key here, or a key here has no tagged identity (this catches renames). Non-seed identities such as Graph Command Line Tools are ignored.",
     "Time-dependent expectations are resolved against the inventory's own scanMetadata.scanStartUtc, never the current clock, so re-validating an old inventory file gives the same answer. The pivot is the credential's endDateTime read from the inventory; a credential is expired when endDateTime <= scanStartUtc. Re-running the seed script skips existing apps, so it does not reset seed-03's secret.",
     "NHI-004 is based on GRANTED application permissions. Requested-but-not-consented (seed-07) and delegated-only (seed-08) must not trigger it.",
-    "seed-11's only credential lives on the SERVICE PRINCIPAL (hidden-credential technique); the app registration has none. Credential rules (NHI-002/003/007) must read both application.* and servicePrincipal.* credentials."
+    "seed-11's only credential lives on the SERVICE PRINCIPAL (hidden-credential technique); the app registration has none. Credential rules (NHI-002/003/007) must read both application.* and servicePrincipal.* credentials.",
+    "Phase 4 (Entra Agent ID, seed/New-AgentIdSeed.ps1): the two blueprints carry the nhi-lab-seed tag; Graph documents an agent's tags as the union of its own and its blueprint's, but the live tenant returned tags = [] for the agents (2026-10-19), so the validator counts an untagged agent as a seed when its agentIdentityBlueprintId points at a tagged seed blueprint. Agent ID objects have no notes property.",
+    "Phase 4: NHI-Seed-BP-Risky's 180-day secret is created client-side as now+180d and stamped server-side a moment later, so its whole-day lifetime is 179 and NHI-002 must NOT fire (same skew note as TODO.md). NHI-007 must not fire on a blueprint: NHI-009 replaces it.",
+    "Phase 4: NHI-Seed-Agent-Risky-1 holds Mail.ReadWrite because Entra refused Directory.ReadWrite.All for an agent identity (lab, 2026-10-16). If the seed is rebuilt and a different permission is granted, check the manifest's blockedByEntra and update this entry."
   ],
   "ignored_rules": ["NHI-006"],
   "score_constraint_note": "Subjects are answer-key names, resolved to identities by the nhi-lab-seed tag (see assumptions). Each constraint keeps its original sentence in 'text'; 'type' and the other fields are what Test-NhiFindings.ps1 executes.",
@@ -31,7 +34,13 @@
     "seed-08-mailread-delegated": { "expected_rules": ["NHI-008"], "purpose": "tenant-wide delegated Mail.Read consent: triggers NHI-008 (Low) but not NHI-004; must score below seed-04" },
     "seed-09-worstcase":          { "expected_rules": ["NHI-001", "NHI-002", "NHI-004", "NHI-007"], "purpose": "must have the highest score" },
     "seed-10-clean":              { "expected_rules": [], "purpose": "negative control" },
-    "seed-11-sp-secret":          { "expected_rules": ["NHI-007"], "purpose": "SP-level (hidden) active secret, 90 days, owned: triggers NHI-007 only; proves the scanner reads SP credentials" }
+    "seed-11-sp-secret":          { "expected_rules": ["NHI-007"], "purpose": "SP-level (hidden) active secret, 90 days, owned: triggers NHI-007 only; proves the scanner reads SP credentials" },
+    "NHI-Seed-BP-Clean":          { "expected_rules": [], "purpose": "Agent ID negative control: blueprint with a 90-day certificate, owner and enabled sponsor" },
+    "NHI-Seed-BP-Risky":          { "expected_rules": ["NHI-009"], "purpose": "blueprint with an active client secret above a Mail.ReadWrite agent: NHI-009 plus the COMBO-U3 uplift (see C6)" },
+    "NHI-Seed-Agent-Clean-1":     { "expected_rules": [], "purpose": "User.Read.All is not a high-risk permission; sponsor and no owner must NOT fire NHI-001" },
+    "NHI-Seed-Agent-Clean-2":     { "expected_rules": [], "purpose": "agent with no permissions" },
+    "NHI-Seed-Agent-Risky-1":     { "expected_rules": ["NHI-004"], "purpose": "Mail.ReadWrite (High) on an agent identity" },
+    "NHI-Seed-Agent-Risky-2":     { "expected_rules": [], "purpose": "harmless sibling under the risky blueprint: the blueprint's risk is not pushed down onto it" }
   },
   "score_constraints": [
     { "id": "C1",  "text": "score(seed-09-worstcase) is the maximum across all seeds",
@@ -47,6 +56,12 @@
     { "id": "C5a", "text": "score(seed-11-sp-secret) == weight(NHI-007)",
       "type": "equals_rule_weight", "subject": "seed-11-sp-secret", "rule": "NHI-007" },
     { "id": "C5b", "text": "score(seed-11-sp-secret) > 0",
-      "type": "greater_than", "subject": "seed-11-sp-secret", "value": 0 }
+      "type": "greater_than", "subject": "seed-11-sp-secret", "value": 0 },
+    { "id": "C6",  "text": "score(NHI-Seed-BP-Risky) == 40 (NHI-009 High 25 + COMBO-U3 15): the cross-identity uplift fires",
+      "type": "equals", "subject": "NHI-Seed-BP-Risky", "value": 40 },
+    { "id": "C7",  "text": "score(NHI-Seed-BP-Clean) == 0",
+      "type": "equals", "subject": "NHI-Seed-BP-Clean", "value": 0 },
+    { "id": "C8",  "text": "score(NHI-Seed-BP-Risky) > score(NHI-Seed-Agent-Risky-1): the shared credential outranks the single privileged agent",
+      "type": "less_than", "left": "NHI-Seed-Agent-Risky-1", "right": "NHI-Seed-BP-Risky" }
   ]
 }

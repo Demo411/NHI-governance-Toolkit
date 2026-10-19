@@ -4,9 +4,10 @@ Why each rule and weight exists. The machine-readable version is `scanner/risk-r
 this document is the justification. Weights are the project owner's decisions; where a number is still
 open it says so.
 
-**Status:** implemented. `scanner/Invoke-NhiScoring.ps1` (engine v0.1.0) applies these rules to
-an inventory file, `scanner/Test-NhiFindings.ps1` checks the result against the Phase 1 answer
-key, and `tests/` holds 52 Pester 5 tests on synthetic inventories. See section 8.
+**Status:** implemented. `scanner/Invoke-NhiScoring.ps1` (engine v0.2.0) applies these rules to
+an inventory file, `scanner/Test-NhiFindings.ps1` checks the result against the answer key, and
+`tests/` holds 73 Pester 5 tests on synthetic inventories. See section 8; Agent ID (Phase 4) is
+section 9.
 
 ## 1. Scoring model
 
@@ -15,8 +16,8 @@ key, and `tests/` holds 52 Pester 5 tests on synthetic inventories. See section 
 | Tier | Points | Used by |
 |------|--------|---------|
 | Critical | 40 | NHI-005; NHI-004 (privilege-granting permissions) |
-| High | 25 | NHI-004 (all other high-risk permissions) |
-| Medium | 10 | NHI-001, NHI-002, NHI-007 (NHI-006 deferred) |
+| High | 25 | NHI-004 (all other high-risk permissions); NHI-009 (blueprint secret) |
+| Medium | 10 | NHI-001, NHI-002, NHI-007, NHI-010, NHI-011 (NHI-006 deferred) |
 | Low | 3 | NHI-003, NHI-008 |
 
 - An identity's score is the sum of its findings' points, plus any combination uplift.
@@ -38,6 +39,13 @@ application".
 
 NHI-002 is deliberately not in the condition. NHI-002 measures how the secret was issued and
 can fire on an already-expired secret, which says nothing about current usability.
+
+Since Phase 4 the condition is written `allOfAny: [[NHI-004, NHI-005], [NHI-007, NHI-009]]`:
+NHI-009 is the blueprint form of NHI-007 (same active secret, scored as a blueprint secret), so
+it arms the uplift the same way. For every non-blueprint identity the behaviour is unchanged.
+
+**COMBO-U3 "Shared credential over a privileged agent": blueprint has NHI-009 and any child
+agent has NHI-004 or NHI-005, +15 on the blueprint, once.** See section 9.
 
 ### Considered and rejected
 
@@ -78,6 +86,9 @@ scores higher than a 90-day live secret (seed-11, 10), which is the behaviour we
 | NHI-006 No sign-in 90+ days | Medium (deferred) | AC-2 | Cannot be seeded; null handling undecided; contributes 0. |
 | NHI-007 Active client secret | Medium | IA-5 | Usable shared secret; Microsoft says not for production. |
 | NHI-008 Tenant-wide delegated consent | Low | AC-6 | Bounded by the signed-in user's rights, so lower than the application equivalent. |
+| NHI-009 Active secret on an agent blueprint | High | IA-5 | One blueprint secret reaches every child agent. Replaces NHI-007 on blueprints (section 9). |
+| NHI-010 Blueprint has no enabled sponsor | Medium | AC-2 | Nobody accountable for the whole agent type (no sponsor, or only disabled ones). |
+| NHI-011 Agent has no enabled sponsor | Medium | AC-2 | NHI-001 for agents, whose accountability is a sponsor, not an owner. |
 
 ### Which identities each rule covers
 
@@ -95,6 +106,12 @@ rule covers every type unless its `appliesToReason` in `risk-rules.json` says wh
 | NHI-006 | All five (deferred) | An unused service principal is an AC-2 gap whoever published it. |
 | NHI-007 | All five | A live secret on any service principal here is a usable credential. |
 | NHI-008 | All five | Tenant-wide consent is a tenant decision; third-party apps are the main target. |
+
+Phase 4 adds a second, independent scope, `identityType` (`application`, `agentBlueprint`,
+`agentBlueprintPrincipal`, `agentIdentity`). A rule without `appliesTo.identityType` runs on every
+identity type, so all rules above keep their coverage except: NHI-001 skips agent identities
+(NHI-011 covers them), NHI-007 skips blueprints (NHI-009 covers them), and NHI-009/010/011 run
+only on their own type. Details in section 9.
 
 An earlier draft scoped every rule except NHI-001 to `ThisTenant` + `Microsoft`, which silently
 excluded `ThirdParty` and `ManagedIdentity`. That was a mistake and is fixed. The
@@ -287,6 +304,9 @@ Decided:
 - NHI-005: static list keyed by template ID (section 3a); Active assignments only.
 - NHI-004 High list: accepted as-is, flagged unresearched.
 - Resource matching by resolved appId, not display name.
+- Phase 4 (section 9): new identityType values; agents inherit their blueprint's ownerType;
+  NHI-009 High replaces NHI-007 on blueprints; COMBO-U3 +15 on the blueprint; agent roll-up is
+  context only.
 
 Considered and deferred:
 - Per-user (`Principal`) grants of Critical-class delegated scopes (section 1).
@@ -365,3 +385,88 @@ the ordinal output ordering each makes tests fail.
 **Known limits:** the NHI-005 role list and the NHI-004/008 scope lists are hand-maintained;
 Eligible role assignments and per-user grants are not scored (section 6); findings reflect only
 what the inventory captured.
+
+## 9. Phase 4: Entra Agent ID
+
+### The object model, as Graph actually returns it
+
+Checked in the lab with a read-only probe (2026-10-17), not assumed from documentation:
+
+| Object | Where it appears | How the scanner recognises it |
+|--------|------------------|-------------------------------|
+| Agent identity blueprint | `/applications`, like any app registration | `@odata.type = #microsoft.graph.agentIdentityBlueprint` |
+| Blueprint principal | `/servicePrincipals`, `servicePrincipalType = Application`, owner org = this tenant | `@odata.type = #microsoft.graph.agentIdentityBlueprintPrincipal` |
+| Agent identity | `/servicePrincipals` only (no application object), `servicePrincipalType = ServiceIdentity` | `@odata.type = #microsoft.graph.agentIdentity`; parent in `agentIdentityBlueprintId` (the blueprint's appId) |
+
+Facts that shaped the design:
+- **Agents come back with `appOwnerOrganizationId = null`**, so the Phase 2 classifier labelled
+  every agent `Unknown`. Decision: an agent inherits its blueprint's `ownerType` (it cannot exist
+  without one). An agent whose blueprint is not in the inventory stays `Unknown` with a warning.
+- **A blueprint's object ID equals its appId**, and so does an agent's. Classic apps have two
+  different IDs. Nothing in the engine relied on them differing.
+- **Agents have sponsors, not owners.** The seed agents have a sponsor and zero owners, so
+  NHI-001 would have flagged every agent. Sponsors are read from
+  `/v1.0/servicePrincipals/{id}/microsoft.graph.agentIdentity/sponsors` and
+  `/v1.0/applications/{id}/microsoft.graph.agentIdentityBlueprint/sponsors`; the sponsor's
+  `accountEnabled` comes from a per-user lookup (the sponsors endpoint does not return it).
+- **Tags: the docs and the tenant disagree.** Graph documents an agent's `tags` as the union of
+  its own and its blueprint's. In the lab (2026-10-19), after tagging both blueprints, the tag
+  appeared on the blueprints and their blueprint principals, but all four agents came back with
+  `tags = []`. So the validator treats an untagged agent as a seed when its
+  `agentIdentityBlueprintId` points at a tagged seed blueprint (an ID link, never a name).
+  Agent ID objects have no `notes` property, so `Remove-NhiLabSeed.ps1` (tags AND notes) never
+  touches them.
+
+### Why COMBO-U3 exists
+
+COMBO-U1 needs privilege and an active secret on the **same** identity. Agent ID splits them:
+the credential lives on the blueprint (agents have none of their own) and the permissions on the
+agent. Scored one identity at a time, the lab's risky pair looks like two unrelated medium
+risks: the blueprint has a secret, the agent has `Mail.ReadWrite`. But the blueprint's secret is
+exchanged for the agent's token, so together they are armed privilege. COMBO-U3 restores that
+link in a second pass after every identity has its own findings.
+
+- **Where:** on the blueprint, because that is where the credential and the fix are. The child
+  keeps only its own finding, so a harmless sibling (Risky-2) is not penalised.
+- **How much:** +15, the same as COMBO-U1. **Once**, however many children qualify; the evidence
+  lists every qualifying child.
+- **Not counted:** an expired blueprint secret (NHI-003, not NHI-009) and certificates.
+
+### Roll-up (context only)
+
+Each blueprint carries `agentRollup` (`agentCount`, `agentsWithFindings`, `worstChild`) and each
+agent carries `parentBlueprint`. The roll-up never adds points: COMBO-U3 already scores the
+dangerous case, and adding the worst child's score as well would count the same risk twice.
+
+### Microsoft's own agent guardrail (lab evidence)
+
+Granting Graph application permissions to the risky agent (2026-10-16):
+
+| Permission | Result |
+|------------|--------|
+| `Directory.ReadWrite.All` | **Refused**: "The specified app role cannot be granted to agent identities." |
+| `Mail.ReadWrite` | Granted |
+
+Microsoft's authorization page lists four blocked permissions (`Application.ReadWrite.All`,
+`RoleManagement.ReadWrite.All`, `User.ReadWrite.All`, `Directory.AccessAsUser.All`) and says
+tenant-wide write or control is not allowed for agents. `Directory.ReadWrite.All` is not on that
+list but was refused, so the enforced list is wider than the documented one. Tenant-wide
+**mailbox** write was allowed: the guardrail protects the directory, not data. So NHI-004 stays
+fully relevant for agents.
+
+### Expected lab scores
+
+| Identity | Rules | Score |
+|----------|-------|-------|
+| NHI-Seed-BP-Risky | NHI-009 + COMBO-U3 | 25 + 15 = 40 |
+| NHI-Seed-Agent-Risky-1 | NHI-004 (Mail.ReadWrite, High) | 25 |
+| NHI-Seed-BP-Clean, Clean-1, Clean-2, Risky-2 | none | 0 |
+
+Constraints C6-C8 in the answer key pin these. NHI-002 does not fire on the risky blueprint: its
+"180-day" secret has a whole-day lifetime of 179 (client vs server timestamp skew, as in TODO.md).
+
+### Not covered
+
+Agent Conditional Access and ID Protection need licensing this lab does not have (CLAUDE.md,
+Phase 4 scope). Agent user accounts were not seeded. Sponsor groups count as accountable without
+checking their members.

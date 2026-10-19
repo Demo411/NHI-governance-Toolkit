@@ -16,7 +16,11 @@
       - Graph resources are matched by the resolved appId of the resource service principal
         (inventory index: servicePrincipal.id -> appId), never by display name.
       - Credential rules read BOTH application.* and servicePrincipal.* credentials.
+      - A rule with appliesTo.identityType runs only on those identity types (Phase 4: Agent ID).
+        Inventories older than scanner v0.2.0 have no identityType; it is read as 'application'.
       - score = base (sum of finding points) + uplift (combinations such as COMBO-U1).
+      - Cross-identity combinations (COMBO-U3) run in a second pass, after every identity has its
+        own findings, because they need a blueprint's findings AND its child agents' findings.
 
 .PARAMETER InventoryPath
     Inventory JSON produced by Invoke-NhiInventory.ps1.
@@ -45,7 +49,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:EngineVersion = '0.1.0'
+$script:EngineVersion = '0.2.0'
 $script:Warnings      = [System.Collections.Generic.List[object]]::new()
 $script:WarningKeys   = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
 $script:ScanStart     = $null   # DateTimeOffset, set once from the inventory
@@ -105,12 +109,19 @@ function Add-ScanWarning {
     # One warning per distinct problem, however many rules trip over it.
     $key = "$Code|$appId|" + (($Detail.GetEnumerator() | Sort-Object Name | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join ';')
     if (-not $script:WarningKeys.Add($key)) { return }
+    # A plain hashtable's key order is randomised per process in .NET, so copy the detail into
+    # an ordered dictionary sorted by key (ordinal). Otherwise two runs on the same inputs could
+    # write the detail fields in a different order and break byte-identical output.
+    $names = [string[]]@($Detail.Keys)
+    [System.Array]::Sort($names, [System.StringComparer]::Ordinal)
+    $sortedDetail = [ordered]@{}
+    foreach ($name in $names) { $sortedDetail[$name] = $Detail[$name] }
     $script:Warnings.Add([ordered]@{
         code        = $Code
         message     = $Message
         appId       = $appId
         displayName = Get-Prop $Identity 'displayName'
-        detail      = $Detail
+        detail      = $sortedDetail
     })
 }
 
@@ -318,6 +329,44 @@ function Test-Nhi008 {
     return @{ Severity = $Rule.severity; Evidence = $evidence }
 }
 
+# NHI-009: same test as NHI-007 (an active secret on either object). The difference is WHICH
+# identities it runs on, and that lives in risk-rules.json (appliesTo.identityType), not here.
+function Test-Nhi009 {
+    param($Identity, $Rule)
+    return Test-Nhi007 $Identity $Rule
+}
+
+# NHI-010 / NHI-011: "no enabled sponsor". Blueprints keep sponsors on the application object,
+# agents on the service principal. A null list means the scanner could not read it: that is
+# "unknown", so it warns instead of firing (never guess). [] means confirmed no sponsors.
+function Test-SponsorRule {
+    param($Identity, $Rule, [string]$OnObject)
+    $obj = Get-Prop $Identity $OnObject
+    # Read the property directly, NOT through Get-Prop: a function returning an empty array
+    # hands back $null, which would turn "confirmed no sponsors" into "unknown".
+    $prop = if ($null -ne $obj) { $obj.PSObject.Properties['sponsors'] } else { $null }
+    if ($null -eq $prop -or $null -eq $prop.Value) {
+        Add-ScanWarning -Code 'sponsorLookupUnknown' -Identity $Identity `
+            -Message "Sponsors for this identity are unknown (lookup failed or the inventory predates sponsor collection), so $($Rule.id) was not evaluated." `
+            -Detail @{ onObject = $OnObject; rule = $Rule.id }
+        return $null
+    }
+    $all = @($prop.Value | Where-Object { $null -ne $_ })
+    # A group cannot be checked for enabled members (membership is not inventoried), so it counts.
+    $accountable = @($all | Where-Object {
+        ([string](Get-Prop $_ 'type') -like '*group') -or ((Get-Prop $_ 'accountEnabled') -eq $true)
+    })
+    if ($accountable.Count -gt 0) { return $null }
+    return @{
+        Severity = $Rule.severity
+        Evidence = @([ordered]@{
+            onObject        = $OnObject
+            sponsorCount    = $all.Count
+            disabledOrUnknownSponsors = @($all | ForEach-Object { [string](Get-Prop $_ 'userPrincipalName') })
+        })
+    }
+}
+
 function Invoke-NhiRule {
     param($Identity, $Rule)
     switch ($Rule.id) {
@@ -328,6 +377,9 @@ function Invoke-NhiRule {
         'NHI-005' { return Test-Nhi005 $Identity $Rule }
         'NHI-007' { return Test-Nhi007 $Identity $Rule }
         'NHI-008' { return Test-Nhi008 $Identity $Rule }
+        'NHI-009' { return Test-Nhi009 $Identity $Rule }
+        'NHI-010' { return Test-SponsorRule $Identity $Rule 'application' }
+        'NHI-011' { return Test-SponsorRule $Identity $Rule 'servicePrincipal' }
         # An active rule with no evaluator must stop the run, not be silently skipped.
         default   { throw "Rule $($Rule.id) is active in the rules file but this engine version has no evaluator for it." }
     }
@@ -362,16 +414,26 @@ function Invoke-Main {
     $activeRules = @($script:Rules.rules | Where-Object { $_.status -eq 'active' })
     $skippedRules = @($script:Rules.rules | Where-Object { $_.status -ne 'active' } |
         ForEach-Object { [ordered]@{ id = $_.id; status = $_.status } })
-    $combinations = @(Get-Prop $script:Rules 'combinations' | Where-Object { $null -ne $_ -and $_.status -eq 'active' })
+    $allCombos = @(Get-Prop $script:Rules 'combinations' | Where-Object { $null -ne $_ -and $_.status -eq 'active' })
+    # Per-identity combinations run in pass 1; cross-identity ones (COMBO-U3) need every
+    # identity's findings first, so they run in pass 2 below.
+    $combinations = @($allCombos | Where-Object { (Get-Prop $_ 'scope') -ne 'crossIdentity' })
+    $crossCombos  = @($allCombos | Where-Object { (Get-Prop $_ 'scope') -eq 'crossIdentity' })
     $cap = $script:Rules.scoring.scoreCap
 
     $scored = foreach ($identity in $identities) {
         $ownerType = [string](Get-Prop $identity 'ownerType')
         if (-not $ownerType) { $ownerType = 'Unknown' }
+        # Inventories written before scanner v0.2.0 have no identityType: everything was 'application'.
+        $identityType = [string](Get-Prop $identity 'identityType')
+        if (-not $identityType) { $identityType = 'application' }
 
         $findings = @()
         foreach ($rule in $activeRules) {
             if ($ownerType -notin @($rule.appliesTo.ownerType)) { continue }
+            # identityType scoping is optional: a rule without it runs on every identity type.
+            $typeScope = Get-Prop $rule.appliesTo 'identityType'
+            if ($null -ne $typeScope -and $identityType -notin @($typeScope)) { continue }
             $hit = Invoke-NhiRule $identity $rule
             if ($null -eq $hit) { continue }
             $findings += [ordered]@{
@@ -387,16 +449,29 @@ function Invoke-Main {
         $fired = @($findings | ForEach-Object { $_.ruleId })
         $uplifts = @()
         foreach ($combo in $combinations) {
-            $any = @($combo.requires.anyOf)
-            $all = @($combo.requires.allOf)
+            # Three condition shapes, all optional:
+            #   anyOf    - at least one of these fired
+            #   allOf    - every one of these fired
+            #   allOfAny - a list of groups; every group needs at least one fired rule
+            #              (COMBO-U1: [[NHI-004, NHI-005], [NHI-007, NHI-009]])
+            $any = @(Get-Prop $combo.requires 'anyOf' | Where-Object { $_ })
+            $all = @(Get-Prop $combo.requires 'allOf' | Where-Object { $_ })
+            $groups = @(Get-Prop $combo.requires 'allOfAny' | Where-Object { $null -ne $_ })
             $anyOk = ($any.Count -eq 0) -or (@($any | Where-Object { $_ -in $fired }).Count -gt 0)
             $allOk = (@($all | Where-Object { $_ -notin $fired }).Count -eq 0)
-            if ($anyOk -and $allOk) {
+            $groupsOk = $true
+            $groupRules = @()
+            foreach ($g in $groups) {
+                $hits = @(@($g) | Where-Object { $_ -in $fired })
+                if ($hits.Count -eq 0) { $groupsOk = $false }
+                $groupRules += @($g)
+            }
+            if ($anyOk -and $allOk -and $groupsOk) {
                 $uplifts += [ordered]@{
                     id     = $combo.id
                     name   = $combo.name
                     points = [int]$combo.uplift
-                    because = @($fired | Where-Object { $_ -in $any -or $_ -in $all })
+                    because = @($fired | Where-Object { $_ -in $any -or $_ -in $all -or $_ -in $groupRules })
                 }
             }
         }
@@ -411,12 +486,83 @@ function Invoke-Main {
         if ($null -ne $cap -and $total -gt $cap) { $total = [int]$cap; $capped = $true }
 
         [ordered]@{
-            appId       = [string](Get-Prop $identity 'appId')
-            displayName = [string](Get-Prop $identity 'displayName')
-            ownerType   = $ownerType
-            score       = [ordered]@{ base = $base; uplift = $uplift; total = $total; capApplied = $capped }
-            findings    = $findings
-            uplifts     = $uplifts
+            appId        = [string](Get-Prop $identity 'appId')
+            displayName  = [string](Get-Prop $identity 'displayName')
+            ownerType    = $ownerType
+            identityType = $identityType
+            score        = [ordered]@{ base = $base; uplift = $uplift; total = $total; capApplied = $capped }
+            findings     = $findings
+            uplifts      = $uplifts
+        }
+    }
+    $scored = @($scored)
+
+    # ---- Pass 2: Agent ID parent/child links, COMBO-U3 and the (context-only) roll-up ----
+    # An agent names its blueprint by appId (servicePrincipal.agentIdentityBlueprintId).
+    $resultByAppId = @{}
+    foreach ($s in $scored) { $resultByAppId[$s.appId] = $s }
+    $childrenByParent = @{}
+    foreach ($identity in $identities) {
+        $parentAppId = [string](Get-Prop (Get-Prop $identity 'servicePrincipal') 'agentIdentityBlueprintId')
+        if (-not $parentAppId) { continue }
+        $child = $resultByAppId[[string](Get-Prop $identity 'appId')]
+        $parent = $resultByAppId[$parentAppId]
+        if ($null -eq $parent -or $parent.identityType -ne 'agentBlueprint') {
+            Add-ScanWarning -Code 'unresolvedBlueprint' -Identity $identity `
+                -Message 'This agent names a blueprint that is not an agentBlueprint in the inventory, so it cannot be linked or take part in COMBO-U3.' `
+                -Detail @{ agentIdentityBlueprintId = $parentAppId }
+            $child['parentBlueprint'] = [ordered]@{ appId = $parentAppId; displayName = $null; resolved = $false }
+            continue
+        }
+        $child['parentBlueprint'] = [ordered]@{ appId = $parentAppId; displayName = $parent.displayName; resolved = $true }
+        if (-not $childrenByParent.ContainsKey($parentAppId)) { $childrenByParent[$parentAppId] = [System.Collections.Generic.List[object]]::new() }
+        $childrenByParent[$parentAppId].Add($child)
+    }
+
+    foreach ($bp in @($scored | Where-Object { $_.identityType -eq 'agentBlueprint' })) {
+        # Children in a fixed (ordinal appId) order so the output is byte-identical run to run.
+        $kids = [System.Collections.Generic.List[object]]::new()
+        if ($childrenByParent.ContainsKey($bp.appId)) { foreach ($k in $childrenByParent[$bp.appId]) { $kids.Add($k) } }
+        $kids.Sort([System.Comparison[object]]{ param($a, $b) [string]::CompareOrdinal([string]$a.appId, [string]$b.appId) })
+        $kids = @($kids)
+
+        $selfFired = @($bp.findings | ForEach-Object { $_.ruleId })
+        foreach ($combo in $crossCombos) {
+            $needSelf  = @(Get-Prop $combo.requires 'self' | Where-Object { $_ })
+            $needChild = @(Get-Prop $combo.requires 'anyChild' | Where-Object { $_ })
+            if (@($needSelf | Where-Object { $_ -notin $selfFired }).Count -gt 0) { continue }
+            $qualifying = @($kids | Where-Object {
+                $kidFired = @($_.findings | ForEach-Object { $_.ruleId })
+                @($needChild | Where-Object { $_ -in $kidFired }).Count -gt 0
+            })
+            if ($qualifying.Count -eq 0) { continue }
+            $bp.uplifts += [ordered]@{
+                id       = $combo.id
+                name     = $combo.name
+                points   = [int]$combo.uplift
+                because  = @($selfFired | Where-Object { $_ -in $needSelf })
+                children = @($qualifying | ForEach-Object {
+                    $kidFired = @($_.findings | ForEach-Object { $_.ruleId })
+                    [ordered]@{ appId = $_.appId; displayName = $_.displayName; rules = @($kidFired | Where-Object { $_ -in $needChild }) }
+                })
+            }
+            $bp.score.uplift += [int]$combo.uplift
+            $bp.score.total  = $bp.score.base + $bp.score.uplift
+            if ($null -ne $cap -and $bp.score.total -gt $cap) { $bp.score.total = [int]$cap; $bp.score.capApplied = $true }
+        }
+
+        # Context only: never added to the score (project owner's decision, risk-rules.json).
+        # worstChild is the highest-scoring child with a score above 0 (ties: first in appId
+        # order); null when no child has any finding, so a clean blueprint names no "worst" agent.
+        $worst = $null
+        foreach ($k in $kids) {
+            if ($k.score.total -le 0) { continue }
+            if ($null -eq $worst -or $k.score.total -gt $worst.score.total) { $worst = $k }
+        }
+        $bp['agentRollup'] = [ordered]@{
+            agentCount         = $kids.Count
+            agentsWithFindings = @($kids | Where-Object { $_.findings.Count -gt 0 }).Count
+            worstChild         = if ($null -ne $worst) { [ordered]@{ appId = $worst.appId; displayName = $worst.displayName; score = $worst.score.total } } else { $null }
         }
     }
     # Order: score descending, then displayName, then appId. The two string keys use ORDINAL
@@ -493,6 +639,7 @@ function Invoke-Main {
             Base   = $_.score.base
             Uplift = $_.score.uplift
             Owner  = $_.ownerType
+            Type   = $_.identityType
             Name   = $_.displayName
             Rules  = (@($_.findings | ForEach-Object { $_.ruleId }) -join ',')
         }

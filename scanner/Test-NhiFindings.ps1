@@ -9,8 +9,9 @@
 
     Rules of the road:
       - A seed is any identity carrying the 'nhi-lab-seed' tag on its application or service
-        principal. Display names never decide this; the answer key's names are only labels used
-        to look up which expectations apply to a tag-verified seed.
+        principal, or an agent identity whose parent blueprint (by appId) is such a seed.
+        Display names never decide this; the answer key's names are only labels used to look up
+        which expectations apply to a tag-verified seed.
       - It fails if a tagged identity has no answer-key entry, or an entry has no tagged identity.
       - Time-dependent expectations (seed-03) are resolved against the INVENTORY's own
         scanMetadata.scanStartUtc, using the credential's endDateTime read from the inventory.
@@ -117,10 +118,23 @@ try {
     $ignored = @(Get-Prop $answerKey 'ignored_rules')
 
     # --- identify seeds by TAG, never by name ------------------------------------------
-    $tagged = @($inventory.identities | Where-Object {
+    $directlyTagged = @($inventory.identities | Where-Object {
         $tags = @(Get-Prop (Get-Prop $_ 'application') 'tags') + @(Get-Prop (Get-Prop $_ 'servicePrincipal') 'tags')
         $tags -contains $SeedTag
     })
+    # Agent identities (Phase 4): Graph documents an agent's tags as the union of its own and its
+    # blueprint's, but in the lab (2026-10-19) the tagged blueprints' agents came back with
+    # tags = []. So an UNTAGGED agent counts as a seed when its parent link
+    # (servicePrincipal.agentIdentityBlueprintId, an appId) points at a tagged seed BLUEPRINT.
+    # Still decided by IDs and tags only, never by display name.
+    $taggedBlueprintAppIds = @($directlyTagged | Where-Object { (Get-Prop $_ 'identityType') -eq 'agentBlueprint' } |
+        ForEach-Object { ([string]$_.appId).ToLowerInvariant() })
+    $inheritedAgents = @($inventory.identities | Where-Object {
+        $_ -notin $directlyTagged -and
+        (Get-Prop $_ 'identityType') -eq 'agentIdentity' -and
+        ([string](Get-Prop (Get-Prop $_ 'servicePrincipal') 'agentIdentityBlueprintId')).ToLowerInvariant() -in $taggedBlueprintAppIds
+    })
+    $tagged = @($directlyTagged) + @($inheritedAgents)
     $keys = @($answerKey.apps.PSObject.Properties.Name)
 
     $byLabel = @{}
@@ -246,7 +260,7 @@ try {
     Write-Host ''
     Write-Host "Findings : $(Split-Path -Leaf $findingsFile)"
     Write-Host "Inventory: $(Split-Path -Leaf $invFile)  (scan start $($scanStart.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")))"
-    Write-Host "Seeds    : $($tagged.Count) identified by the '$SeedTag' tag, $($keys.Count) in the answer key"
+    Write-Host "Seeds    : $($tagged.Count) identified by the '$SeedTag' tag ($($inheritedAgents.Count) agent(s) through their tagged blueprint), $($keys.Count) in the answer key"
     Write-Host ''
     Write-Host 'Rule sets per seed'
     @($rows) | Format-Table Seed, State, Expected, Actual, Score, Result -AutoSize | Out-Host

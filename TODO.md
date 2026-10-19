@@ -18,6 +18,20 @@
       inventory (must emit an `unresolvedResource` warning, not match). Rules match on the
       resolved appId, never on resourceDisplayName.
 
+## Phase 4 backlog
+- [x] Live run 20261019-231744Z: scanner v0.2.0, engine v0.2.0, validator PASS (17 seeds, C1-C8).
+- [ ] Agent ID cleanup script. Remove-NhiLabSeed.ps1 needs tags AND notes, and Agent ID objects
+      have no notes, so it never touches them (safe, but no cleanup path). Needs the Agent ID
+      delete permissions; delete agents before their blueprint.
+- [x] Checked whether agents' `tags` include the blueprint's `nhi-lab-seed` (documented as a union).
+      Live inventory 20261019-231744Z: they do NOT (agents show `[]`). The validator now inherits the
+      seed marker through the parent link instead (tests/Validator.Tests.ps1).
+- [ ] Track Microsoft's agent permission block list. Lab: Directory.ReadWrite.All refused,
+      Mail.ReadWrite allowed (2026-10-16); the documented list names four permissions. Re-test
+      Files.ReadWrite.All / Sites.ReadWrite.All and record results in risk-model.md section 9.
+- [ ] Sponsor groups count as accountable without checking members. Revisit if group sponsors
+      appear (dynamic or Microsoft 365 groups only, per Microsoft).
+
 ## Considered and deferred
 - Per-user (Principal) grants of Critical-class delegated scopes are not covered. Considered and
   deferred: an admin consenting for themselves on Microsoft admin tooling is routine and bounded
