@@ -8,6 +8,7 @@
     "Time-dependent expectations are resolved against the inventory's own scanMetadata.scanStartUtc, never the current clock, so re-validating an old inventory file gives the same answer. The pivot is the credential's endDateTime read from the inventory; a credential is expired when endDateTime <= scanStartUtc. Re-running the seed script skips existing apps, so it does not reset seed-03's secret.",
     "NHI-004 is based on GRANTED application permissions. Requested-but-not-consented (seed-07) and delegated-only (seed-08) must not trigger it.",
     "seed-11's only credential lives on the SERVICE PRINCIPAL (hidden-credential technique); the app registration has none. Credential rules (NHI-002/003/007) must read both application.* and servicePrincipal.* credentials.",
+    "Phase 5: seed-02-longsecret is state-dependent (state_dependent block). Its secret is deleted only after GitHub Actions OIDC federation is proven, so the answer key accepts BOTH the before state (secret present: NHI-002 + NHI-007) and the after state (no secret, matching federated credential: no findings). The federated state requires the federated credential to match issuer, subject and audiences exactly; a credential for a different subject does not count.",
     "Phase 4 (Entra Agent ID, seed/New-AgentIdSeed.ps1): the two blueprints carry the nhi-lab-seed tag; Graph documents an agent's tags as the union of its own and its blueprint's, but the live tenant returned tags = [] for the agents (2026-10-19), so the validator counts an untagged agent as a seed when its agentIdentityBlueprintId points at a tagged seed blueprint. Agent ID objects have no notes property.",
     "Phase 4: NHI-Seed-BP-Risky's 180-day secret is created client-side as now+180d and stamped server-side a moment later, so its whole-day lifetime is 179 and NHI-002 must NOT fire (same skew note as TODO.md). NHI-007 must not fire on a blueprint: NHI-009 replaces it.",
     "Phase 4: NHI-Seed-Agent-Risky-1 holds Mail.ReadWrite because Entra refused Directory.ReadWrite.All for an agent identity (lab, 2026-10-16). If the seed is rebuilt and a different permission is granted, check the manifest's blockedByEntra and update this entry."
@@ -16,7 +17,19 @@
   "score_constraint_note": "Subjects are answer-key names, resolved to identities by the nhi-lab-seed tag (see assumptions). Each constraint keeps its original sentence in 'text'; 'type' and the other fields are what Test-NhiFindings.ps1 executes.",
   "apps": {
     "seed-01-ownerless":          { "expected_rules": ["NHI-001"] },
-    "seed-02-longsecret":         { "expected_rules": ["NHI-002", "NHI-007"] },
+    "seed-02-longsecret": {
+      "state_dependent": {
+        "pivot": "client secrets in application.passwordCredentials and servicePrincipal.passwordCredentials, and application.federatedIdentityCredentials, all read from the inventory (never from names)",
+        "with_secret": { "when": "at least one client secret with endDateTime > scanStartUtc (also true while a federated credential coexists with the secret)", "expected_rules": ["NHI-002", "NHI-007"] },
+        "federated":   { "when": "no client secret at all AND at least one federated credential matching expected_federation exactly (case-sensitive; issuer, subject and the whole audiences set)", "expected_rules": [] },
+        "expected_federation": {
+          "issuer": "https://token.actions.githubusercontent.com",
+          "subject": "repo:Demo411/NHI-governance-Toolkit:environment:lab",
+          "audiences": ["api://AzureADTokenExchange"]
+        }
+      },
+      "purpose": "Phase 5 target. A 730-day client secret (NHI-002 + NHI-007) that is replaced by GitHub Actions OIDC federation, after which it must produce no findings. Any other state (no secret and no matching federated credential, or only expired secrets) fails the validator rather than guessing. Inventories from before scanner v0.3.0 have no federatedIdentityCredentials and still resolve to with_secret."
+    },
     "seed-03-expiring": {
       "time_dependent": {
         "clock": "scanMetadata.scanStartUtc",

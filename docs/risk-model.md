@@ -6,7 +6,7 @@ open it says so.
 
 **Status:** implemented. `scanner/Invoke-NhiScoring.ps1` (engine v0.2.0) applies these rules to
 an inventory file, `scanner/Test-NhiFindings.ps1` checks the result against the answer key, and
-`tests/` holds 73 Pester 5 tests on synthetic inventories. See section 8; Agent ID (Phase 4) is
+`tests/` holds 117 Pester 5 tests on synthetic inventories. See section 8; Agent ID (Phase 4) is
 section 9.
 
 ## 1. Scoring model
@@ -470,3 +470,101 @@ Constraints C6-C8 in the answer key pin these. NHI-002 does not fire on the risk
 Agent Conditional Access and ID Protection need licensing this lab does not have (CLAUDE.md,
 Phase 4 scope). Agent user accounts were not seeded. Sponsor groups count as accountable without
 checking their members.
+
+## 10. Phase 5: replacing seed-02's client secret with GitHub Actions OIDC federation
+
+### What changes, and what does not
+
+seed-02 is the 730-day client secret (NHI-002 + NHI-007, score 20 in the Phase 3 table). The fix is
+**workload identity federation**: instead of holding a secret, the app registration holds a
+*federated identity credential* (FIC), a rule that says "accept a token issued by GitHub for this
+exact repository and environment as proof that the caller is this app". Nothing secret is stored in
+GitHub or in Entra, so there is nothing to rotate or leak.
+
+| Field | Value | Why |
+|-------|-------|-----|
+| issuer | `https://token.actions.githubusercontent.com` | GitHub's OIDC issuer |
+| subject | `repo:Demo411/NHI-governance-Toolkit:environment:lab` | exact match, no wildcards; the `environment:lab` form ties the trust to one GitHub environment that has a required reviewer |
+| audience | `api://AzureADTokenExchange` | the audience Entra expects for token exchange |
+
+No rule is added. The scanner records FICs as facts; the existing NHI-002 and NHI-007 simply stop
+firing once the secret is gone. A future rule for a **broad FIC subject** is in TODO.md.
+
+### Scanner v0.3.0: collecting FICs
+
+`GET /v1.0/applications/{id}/federatedIdentityCredentials`, one call per app, through the same
+GET-only helper as everything else, needing only `Application.Read.All`. The list endpoint cannot
+`$select` or `$expand` FICs, which is why it is a per-app call (the same shape as owners). Only
+`name`, `issuer`, `subject` and `audiences` are kept. A failed lookup stores `null` plus a warning;
+`null` means "unknown" and is deliberately different from `[]` ("confirmed none"). Inventories from
+before v0.3.0 have no `federatedIdentityCredentials` property at all.
+
+### The state-dependent answer key
+
+seed-02's entry is a `state_dependent` block, like seed-03's `time_dependent`. The pivot is read
+from the inventory, never from names:
+
+| Inventory shows | State | Expected rules |
+|-----------------|-------|----------------|
+| at least one **active** client secret on the application **or** the service principal | `with_secret` | NHI-002, NHI-007 |
+| **no** client secret at all, and a FIC matching `expected_federation` **exactly** | `federated` | none |
+| anything else (no secret and no matching FIC; only expired secrets) | undefined | **validator fails** |
+
+- A FIC with a different subject, a different issuer, a different audience set, or even a different
+  letter case does not count. Comparison is case-sensitive on all three fields.
+- Mixed state (secret and FIC together) is `with_secret`. That is the true state between steps C
+  and E, and the engine still reports both rules then.
+- The secret check reads `application.passwordCredentials` and `servicePrincipal.passwordCredentials`
+  (the seed-11 lesson: a secret hidden on the service principal still counts).
+- Old inventories still validate: they have a secret and no FIC property, so they resolve to
+  `with_secret`.
+- "Fail loudly" is deliberate. If the secret is deleted before the FIC exists, the app has no
+  working credential, and a validator that passed that state would hide the mistake.
+
+### The workflow (`.github/workflows/oidc-demo.yml`)
+
+It lives at the **repository root**: GitHub only runs workflows from `.github/workflows/` there, so
+the `remediation/.github/...` path in the original layout would never execute.
+
+- `workflow_dispatch` only; job `environment: lab`; `permissions: id-token: write, contents: read`.
+- `azure/login` is pinned by full commit SHA (`7184910d...` = v2.3.1, looked up from
+  github.com/Azure/login on 2026-10-19; the tag object and the commit lookup agree). A tag can be
+  moved to different code, a SHA cannot. v3.x exists; v2 was chosen deliberately, and moving to v3 is
+  a separate, reviewed change.
+- `allow-no-subscriptions: true`: the lab has no Azure subscription; only a Graph token is needed.
+- The repository is public, so its logs are public. Client ID and tenant ID are environment
+  **secrets** (GitHub masks them in logs) and the job never prints them or the token.
+- Proof step: get a Graph token, decode the payload in memory, print only `idtyp`, `appidacr` and
+  whether `appid` equals the client ID (true/false). `appidacr` is `2` for a client assertion
+  (certificate or federated) and `1` for a client secret. The job fails if `appidacr` is not 2 or
+  the appid does not match. `idtyp` is printed but does not gate the job, because it is an optional
+  claim in some token versions.
+
+### The two tenant-changing scripts (`remediation/`)
+
+| Script | Writes | Guard |
+|--------|--------|-------|
+| `Add-NhiFederatedCredential.ps1` | `POST .../federatedIdentityCredentials` | app confirmed by tag **and** notes marker; exact subject (no `*`/`?`); identical FIC is a no-op; same name with different values is refused |
+| `Remove-NhiAppSecret.ps1` | `POST .../removePassword` (one `keyId`) | app confirmed by tag and notes; **a matching FIC must already exist**; the `keyId` must be a secret on that app; prints keyId and secret display name only |
+
+Both support `-WhatIf` (which requests only `Application.Read.All`), request the narrowest delegated
+write scope (`Application.ReadWrite.All`), run their guards on reads so a dry run shows a refusal,
+and disconnect in a `finally`. They are two scripts, not one, so deleting a secret can never happen
+in the same run that creates its replacement. The script can check that the FIC *exists* but not
+that the GitHub login *works*; that proof is the workflow run, and the order is a human gate.
+
+### Tests
+
+`tests/Federation.Tests.ps1`: seed-02 in each state through the real engine and validator; a FIC with
+a different subject (and four other near misses) does not count; an SP-only secret counts as a
+secret; undefined states fail; FIC projection drops `id`/`description` and a failed lookup returns
+`null`. `tests/Remediation.Tests.ps1`: the scripts run in a child process with the Graph commands
+stubbed, asserting reads, writes, scopes and refusals; the workflow is checked as text (SHA pins,
+triggers, permissions, nothing sensitive printed). The "FIC must exist" guard was mutation-checked:
+disabling it makes two tests fail.
+
+### Not verified yet
+
+Everything here is offline. Not yet exercised against the live tenant: the FIC POST, `removePassword`,
+the FIC listing on a real app, and the workflow itself. Whether `GET .../federatedIdentityCredentials`
+works for Agent ID blueprints is also untested; the scanner will warn rather than fail if it does not.

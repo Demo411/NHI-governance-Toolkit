@@ -18,7 +18,7 @@ Current (Phase 4), measured on the lab tenant (inventory `20261019-231744Z`):
 
 - **101 identities** scored, including 2 agent blueprints and 4 agent identities (Entra Agent ID). **17 seeded identities** match the answer key and all **10 score constraints** hold: `RESULT: PASS`.
 - The risky blueprint (an active client secret above an agent holding `Mail.ReadWrite`) scores **40** (NHI-009 25 + COMBO-U3 15) and ranks second of all identities.
-- **73 Pester tests** on synthetic inventories (no tenant needed), **mutation-checked**: loosening the NHI-002 boundary, the NHI-003 expiry comparison, the resolved-appId check, or the ordinal output ordering each makes tests fail.
+- **117 Pester tests** on synthetic inventories (no tenant needed), **mutation-checked**: loosening the NHI-002 boundary, the NHI-003 expiry comparison, the resolved-appId check, or the ordinal output ordering each makes tests fail.
 - **History (Phase 3, inventory `20261012-130643Z`):** 89 identities scored (89 service principals, 11 of which also have an app registration); 11 seeded identities; 9 identities had findings, all 9 seeds. 7 of 8 rules active (NHI-006 deferred). All 11 seeds matched the answer key and all 7 score constraints held. 52 Pester tests.
 - **Reproducibility demo:** `seed-03-expiring` has a 1-day secret. Scored on a scan taken before it expired it gets NHI-007 and **10** points; scored on a later scan it gets NHI-003 and **3**. Re-running the engine on the same inventory gives a findings file with the identical SHA-256, and across the two findings files `seed-03-expiring` was the only identity whose rules or score changed. See [`examples/`](examples/).
 
@@ -105,6 +105,10 @@ Full list: [`docs/risk-model.md`](docs/risk-model.md) section 6 and [`TODO.md`](
 │   ├── Invoke-NhiScoring.ps1     # offline scoring engine -> findings JSON
 │   ├── Test-NhiFindings.ps1      # validator against the answer key
 │   └── risk-rules.json           # rules, tiers, uplift, NIST mapping
+├── .github/workflows/oidc-demo.yml  # Phase 5: manual OIDC login proof (no secret)
+├── remediation/
+│   ├── Add-NhiFederatedCredential.ps1  # Phase 5: adds the GitHub FIC (writes; -WhatIf first)
+│   └── Remove-NhiAppSecret.ps1   # Phase 5: deletes one secret, only if the FIC exists
 ├── tests/                        # Pester 5, synthetic inventories
 ├── examples/                     # sanitized before/after outputs
 └── docs/risk-model.md            # why each rule and weight exists

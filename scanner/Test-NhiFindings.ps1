@@ -15,6 +15,10 @@
       - It fails if a tagged identity has no answer-key entry, or an entry has no tagged identity.
       - Time-dependent expectations (seed-03) are resolved against the INVENTORY's own
         scanMetadata.scanStartUtc, using the credential's endDateTime read from the inventory.
+      - State-dependent expectations (seed-02, Phase 5) pivot on the inventory's own facts: an
+        active client secret (application OR service principal) means "with_secret"; no secret at
+        all plus a federated identity credential that matches the answer key's issuer, subject and
+        audiences EXACTLY means "federated". Any other combination fails loudly.
       - Before judging anything it re-hashes the inventory and risk-rules.json and refuses to
         continue if they differ from what the findings file says it was built from.
 
@@ -180,6 +184,28 @@ try {
                     else                     { $state = 'before expiry'; $expected = @($td.before_expiry.expected_rules) }
                 }
             }
+        }
+        elseif ($null -ne (Get-Prop $entry 'state_dependent')) {
+            $sd = Get-Prop $entry 'state_dependent'
+            $want = $sd.expected_federation
+            # Both places a client secret can live (seed-11 lesson: a secret on the service
+            # principal counts), read from the inventory. Same clock as the engine.
+            $secrets = @(@(Get-Prop (Get-Prop $identity 'application') 'passwordCredentials') +
+                         @(Get-Prop (Get-Prop $identity 'servicePrincipal') 'passwordCredentials') | Where-Object { $null -ne $_ })
+            $activeSecrets = @($secrets | Where-Object { (ConvertTo-UtcDateTimeOffset $_.endDateTime 'secret endDateTime') -gt $scanStart })
+            # Exact, case-sensitive match on all three fields. No wildcards, no "any FIC will do":
+            # a trust on the wrong repo or environment must not count as the fix.
+            $wantAud = (@($want.audiences) | Sort-Object -CaseSensitive) -join '|'
+            $matching = @(@(Get-Prop (Get-Prop $identity 'application') 'federatedIdentityCredentials') | Where-Object {
+                $null -ne $_ -and
+                $_.issuer  -ceq $want.issuer -and
+                $_.subject -ceq $want.subject -and
+                ((@($_.audiences) | Sort-Object -CaseSensitive) -join '|') -ceq $wantAud
+            })
+            if ($activeSecrets.Count -gt 0) { $state = 'with secret'; $expected = @($sd.with_secret.expected_rules) }
+            elseif ($secrets.Count -eq 0 -and $matching.Count -ge 1) { $state = 'federated'; $expected = @($sd.federated.expected_rules) }
+            elseif ($secrets.Count -gt 0) { $note = "no active secret but $($secrets.Count) expired one(s) remain; state_dependent defines no expectation for that" }
+            else { $note = 'no secret and no federated credential matching the answer key (issuer, subject, audiences); state is undefined' }
         }
         else { $expected = @($entry.expected_rules) }
 

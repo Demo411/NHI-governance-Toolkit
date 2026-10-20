@@ -1,0 +1,63 @@
+# Phase 5 proof: log in to Entra with a GitHub-issued OIDC token instead of a client secret.
+#
+# How it works: GitHub mints a short-lived JWT for this job (issuer token.actions.githubusercontent.com,
+# subject repo:Demo411/NHI-governance-Toolkit:environment:lab). azure/login hands it to Entra as a
+# client assertion. Entra compares it to the federated identity credential on the app registration;
+# if issuer, subject and audience match EXACTLY, it issues an access token. No secret is stored.
+#
+# The repository is public, so these logs are public. The tenant ID and client ID live in
+# environment secrets (GitHub masks them in logs) and are never printed. The token is never printed.
+name: oidc-demo
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  prove-federated-login:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # The subject in the Entra credential ends in ":environment:lab", so this line is what makes the
+    # token's subject match. The 'lab' environment also has a required reviewer (manual approval).
+    environment: lab
+    permissions:
+      id-token: write   # lets the job request GitHub's OIDC token; nothing else is granted
+      contents: read
+    steps:
+      # Pinned to a full commit SHA (a tag can be moved, a SHA cannot). Looked up from
+      # github.com/Azure/login releases on 2026-10-19; the SHA is the commit the v2.3.1 tag points to.
+      - name: Azure login (OIDC, no secret)
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true   # the lab has no Azure subscription; we only need a Graph token
+
+      - name: Prove how we authenticated (safe claims only)
+        shell: pwsh
+        env:
+          EXPECTED_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The token stays in this variable. It is never written to the log, a file or an output.
+          $token = az account get-access-token --resource https://graph.microsoft.com --query accessToken -o tsv
+          if (-not $token) { throw 'No access token returned.' }
+
+          # A JWT is header.payload.signature, each base64url. Decode only the payload, in memory.
+          $b64 = $token.Split('.')[1].Replace('-', '+').Replace('_', '/')
+          $b64 = $b64.PadRight($b64.Length + (4 - $b64.Length % 4) % 4, '=')
+          $claims = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64)) | ConvertFrom-Json
+
+          $appIdMatches = ([string]$claims.appid -eq $env:EXPECTED_CLIENT_ID)
+          # idtyp is an optional claim in some token versions, so it is shown but does not gate the job.
+          $idtyp = if ($claims.PSObject.Properties['idtyp']) { $claims.idtyp } else { '(not present)' }
+          Write-Host "idtyp   : $idtyp    (app = an application identity, not a user)"
+          Write-Host "appidacr: $($claims.appidacr)    (2 = client assertion, i.e. federated; a client secret gives 1)"
+          Write-Host "appid equals the client ID: $appIdMatches"
+
+          if ($claims.appidacr -ne '2' -or -not $appIdMatches) {
+            Write-Host '::error::Federated login did not look like expected (see claims above).'
+            exit 1
+          }
+          Write-Host 'OK: authenticated as the app with a federated assertion; no client secret was used.'

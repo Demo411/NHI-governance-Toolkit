@@ -33,6 +33,20 @@
 - [ ] Sponsor groups count as accountable without checking members. Revisit if group sponsors
       appear (dynamic or Microsoft 365 groups only, per Microsoft).
 
+## Phase 5 backlog (GitHub Actions OIDC for seed-02)
+- [x] A: scanner v0.3.0 collects FICs; state-dependent answer key; workflow; remediation scripts; tests.
+- [ ] B: create GitHub environment `lab` (required reviewer) and secrets AZURE_CLIENT_ID / AZURE_TENANT_ID.
+- [ ] C: add the FIC to seed-02 (tenant change, -WhatIf first).
+- [ ] D: run and approve the workflow; check appidacr = 2.
+- [ ] E: delete seed-02's secret by keyId, only after D (tenant change, -WhatIf first).
+- [ ] F: rescan, score, validate; save sanitized before/after under examples/; update README results.
+- [ ] New rule idea: "broad FIC subject" (wildcard-like or branch-only subjects such as
+      `repo:org/repo:ref:refs/heads/main`, `pull_request` subjects, a missing environment, or an
+      issuer that is not a known OIDC provider). Needs FIC data from several apps first; today the
+      scanner only records the facts.
+- [ ] Consider moving azure/login from v2.3.1 to v3.x as a separate, reviewed change (pinned by SHA).
+- [ ] Check whether the FIC listing works on Agent ID blueprints (the scanner warns if not).
+
 ## Considered and deferred
 - Per-user (Principal) grants of Critical-class delegated scopes are not covered. Considered and
   deferred: an admin consenting for themselves on Microsoft admin tooling is routine and bounded

@@ -52,6 +52,17 @@ function New-SynRole {
     [ordered]@{ roleDefinitionId = $RoleDefinitionId; roleName = $RoleName; directoryScopeId = '/'; assignmentType = $AssignmentType }
 }
 
+# A federated identity credential as the scanner projects it. Defaults are the expected GitHub trust.
+function New-SynFic {
+    param(
+        [string]$Name = 'github-oidc-lab',
+        [string]$Issuer = 'https://token.actions.githubusercontent.com',
+        [string]$Subject = 'repo:Demo411/NHI-governance-Toolkit:environment:lab',
+        [string[]]$Audiences = @('api://AzureADTokenExchange')
+    )
+    [ordered]@{ name = $Name; issuer = $Issuer; subject = $Subject; audiences = @($Audiences) }
+}
+
 # A sponsor as the scanner projects it. Type 'user' or 'group'; accountEnabled only for users.
 function New-SynSponsor {
     param([ValidateSet('user', 'group')][string]$Type = 'user', [bool]$Enabled = $true, [string]$Upn = 'sponsor@lab.test')
@@ -73,6 +84,9 @@ function New-SynIdentity {
         [object[]]$AppCerts = @(),
         [object[]]$SpSecrets = @(),
         [object[]]$SpCerts = @(),
+        # Phase 5. Omit -Fics to build an old (pre scanner v0.3.0) record with no
+        # federatedIdentityCredentials property at all; -Fics @() means "confirmed none".
+        [object[]]$Fics = @(),
         [object[]]$AppRoleAssignments = @(),
         [object[]]$Grants = @(),
         [object[]]$Roles = @(),
@@ -93,6 +107,7 @@ function New-SynIdentity {
             id = [guid]::NewGuid().ToString(); appId = $AppId; displayName = $Name; tags = @($Tags)
             owners = $ownerList; passwordCredentials = @($AppSecrets); keyCredentials = @($AppCerts)
         }
+        if ($PSBoundParameters.ContainsKey('Fics')) { $application['federatedIdentityCredentials'] = @($Fics) }
     }
     $record = [ordered]@{
         appId = $AppId; displayName = $Name; ownerType = $OwnerType
@@ -212,6 +227,23 @@ function Get-Seed03Expectation {
                 expired_when = 'endDateTime <= scanStartUtc'
                 before_expiry = [ordered]@{ expected_rules = @('NHI-007') }
                 after_expiry  = [ordered]@{ expected_rules = @('NHI-003') }
+            }
+        }
+    }
+}
+
+# The same state_dependent block used by the real answer key for seed-02 (Phase 5).
+function Get-Seed02Expectation {
+    @{
+        'seed-02-longsecret' = [ordered]@{
+            state_dependent = [ordered]@{
+                with_secret = [ordered]@{ expected_rules = @('NHI-002', 'NHI-007') }
+                federated   = [ordered]@{ expected_rules = @() }
+                expected_federation = [ordered]@{
+                    issuer = 'https://token.actions.githubusercontent.com'
+                    subject = 'repo:Demo411/NHI-governance-Toolkit:environment:lab'
+                    audiences = @('api://AzureADTokenExchange')
+                }
             }
         }
     }

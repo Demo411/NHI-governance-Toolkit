@@ -17,6 +17,8 @@
       4. Merge everything into ONE record per appId and write it as JSON.
       5. (Phase 4) Recognise Entra Agent ID objects from their Graph @odata.type, record each
          agent's parent blueprint and the sponsors of blueprints and agents.
+      6. (Phase 5) Record each application's federated identity credentials (workload identity
+         federation trust: issuer, subject, audiences) as facts. No rule reads them yet.
 
     Every Graph call goes through Invoke-GraphGet below, which hard-codes -Method GET.
     That is the single choke point guaranteeing the scanner cannot write to the tenant.
@@ -38,7 +40,7 @@ $ErrorActionPreference = 'Stop'
 # 90-day inactivity, etc.) must evaluate against scanStartUtc, never the wall clock
 # at scoring time, so re-scoring the same file always gives the same answer.
 $scanStart = (Get-Date).ToUniversalTime()
-$ScannerVersion = '0.2.0'
+$ScannerVersion = '0.3.0'
 $warnings = [System.Collections.Generic.List[string]]::new()
 
 function Add-ScanWarning {
@@ -125,6 +127,34 @@ function Get-Owners {
     catch {
         Add-ScanWarning "Owners lookup failed for $Label ($ObjectId): $($_.Exception.Message)"
         return $null   # null = "we don't know", distinct from @() = "confirmed no owners"
+    }
+}
+
+# Federated identity credentials (Phase 5). A FIC is a TRUST, not a secret: it tells Entra "accept a
+# token signed by <issuer> whose subject is <subject>". Whitelisted like the credentials above.
+# 'id' and 'description' are deliberately dropped: neither is needed to judge the trust.
+function ConvertTo-SafeFederatedCredential {
+    param($Fic)
+    [ordered]@{
+        name      = $Fic['name']
+        issuer    = $Fic['issuer']
+        subject   = $Fic['subject']
+        audiences = @($Fic['audiences'])
+    }
+}
+
+# Needs only Application.Read.All (already requested). Not available via $select/$expand on the
+# applications list, hence one GET per app, the same shape as Get-Owners.
+function Get-FederatedCredentials {
+    param([string]$ObjectId, [string]$Label)
+    try {
+        $fics = Get-GraphPaged "https://graph.microsoft.com/v1.0/applications/$ObjectId/federatedIdentityCredentials"
+        # Leading comma: keep "confirmed none" (@()) distinct from "lookup failed" ($null).
+        return , @($fics | Where-Object { $null -ne $_ } | ForEach-Object { ConvertTo-SafeFederatedCredential $_ })
+    }
+    catch {
+        Add-ScanWarning "Federated credential lookup failed for $Label ($ObjectId): $($_.Exception.Message)"
+        return $null   # null = "we don't know", distinct from @() = "confirmed none"
     }
 }
 
@@ -224,6 +254,8 @@ foreach ($a in $rawApps) {
         owners              = Get-Owners -Collection 'applications' -ObjectId $a['id'] -Label $label
         passwordCredentials = @($a['passwordCredentials'] | Where-Object { $null -ne $_ } | ForEach-Object { ConvertTo-SafePasswordCredential $_ })
         keyCredentials      = @($a['keyCredentials'] | Where-Object { $null -ne $_ } | ForEach-Object { ConvertTo-SafeKeyCredential $_ })
+        # Workload identity federation trusts (facts only; no rule scores them yet). null = lookup failed.
+        federatedIdentityCredentials = Get-FederatedCredentials -ObjectId $a['id'] -Label $label
         # Requested permissions only (what the app asks for), NOT what was granted.
         requiredResourceAccess = @($a['requiredResourceAccess'])
     }
