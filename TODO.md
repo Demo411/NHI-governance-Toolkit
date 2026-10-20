@@ -20,9 +20,10 @@
 
 ## Phase 4 backlog
 - [x] Live run 20261019-231744Z: scanner v0.2.0, engine v0.2.0, validator PASS (17 seeds, C1-C8).
-- [ ] Agent ID cleanup script. Remove-NhiLabSeed.ps1 needs tags AND notes, and Agent ID objects
-      have no notes, so it never touches them (safe, but no cleanup path). Needs the Agent ID
-      delete permissions; delete agents before their blueprint.
+- [x] Agent ID cleanup script: seed/Remove-AgentIdSeed.ps1 (tag + parent-link markers, soft delete by
+      default, -Purge opt-in, read-only scopes under -WhatIf). Dry run found exactly the 8 seeds.
+      Not yet run for real: Phase 5 and the write-up still need the seeds. The -Purge path (and its
+      retry loop) is untested until the first real cleanup; check it then.
 - [x] Checked whether agents' `tags` include the blueprint's `nhi-lab-seed` (documented as a union).
       Live inventory 20261019-231744Z: they do NOT (agents show `[]`). The validator now inherits the
       seed marker through the parent link instead (tests/Validator.Tests.ps1).

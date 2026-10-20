@@ -14,12 +14,12 @@ flowchart LR
 
 ## Results
 
-Measured on the lab tenant (inventory `20261012-130643Z`):
+Current (Phase 4), measured on the lab tenant (inventory `20261019-231744Z`):
 
-- **89 identities** scored (89 service principals, 11 of which also have an app registration in the tenant); **11 seeded identities** with a known expected outcome. 9 identities have findings, and all 9 are seeds.
-- **7 of 8 rules active** (NHI-006 deferred). All 11 seeds match the answer key and all 7 score constraints hold: `RESULT: PASS`.
-- **Phase 4 (Entra Agent ID), inventory `20261019-231744Z`:** 101 identities, including 2 agent blueprints and 4 agent identities. 17 seeds match the answer key and all 10 score constraints hold: `RESULT: PASS`. The risky blueprint (active secret above a `Mail.ReadWrite` agent) scores **40** (NHI-009 25 + COMBO-U3 15) and ranks second of all identities.
+- **101 identities** scored, including 2 agent blueprints and 4 agent identities (Entra Agent ID). **17 seeded identities** match the answer key and all **10 score constraints** hold: `RESULT: PASS`.
+- The risky blueprint (an active client secret above an agent holding `Mail.ReadWrite`) scores **40** (NHI-009 25 + COMBO-U3 15) and ranks second of all identities.
 - **73 Pester tests** on synthetic inventories (no tenant needed), **mutation-checked**: loosening the NHI-002 boundary, the NHI-003 expiry comparison, the resolved-appId check, or the ordinal output ordering each makes tests fail.
+- **History (Phase 3, inventory `20261012-130643Z`):** 89 identities scored (89 service principals, 11 of which also have an app registration); 11 seeded identities; 9 identities had findings, all 9 seeds. 7 of 8 rules active (NHI-006 deferred). All 11 seeds matched the answer key and all 7 score constraints held. 52 Pester tests.
 - **Reproducibility demo:** `seed-03-expiring` has a 1-day secret. Scored on a scan taken before it expired it gets NHI-007 and **10** points; scored on a later scan it gets NHI-003 and **3**. Re-running the engine on the same inventory gives a findings file with the identical SHA-256, and across the two findings files `seed-03-expiring` was the only identity whose rules or score changed. See [`examples/`](examples/).
 
 ## Rules
@@ -76,7 +76,7 @@ Step 3 only applies to a tenant that was seeded; on any other tenant, use steps 
 
 ## Lab warning
 
-`seed/New-NhiLabSeed.ps1` deliberately creates risky identities (an ownerless app, a 2-year secret, apps granted `Directory.ReadWrite.All` and `RoleManagement.ReadWrite.Directory`, a service principal holding Application Administrator). It needs write scopes and changes the tenant. **Use a dedicated test tenant only, never production.** Run it with `-WhatIf` first. `seed/Remove-NhiLabSeed.ps1` removes only objects tagged `nhi-lab-seed`. The seeder discards each secret as it is created; no secret value is stored or printed.
+`seed/New-NhiLabSeed.ps1` deliberately creates risky identities (an ownerless app, a 2-year secret, apps granted `Directory.ReadWrite.All` and `RoleManagement.ReadWrite.Directory`, a service principal holding Application Administrator). It needs write scopes and changes the tenant. **Use a dedicated test tenant only, never production.** Run it with `-WhatIf` first. `seed/Remove-NhiLabSeed.ps1` removes only objects tagged `nhi-lab-seed` (and carrying the matching `notes`). Agent ID objects have no `notes`, so `seed/Remove-AgentIdSeed.ps1` removes those instead: blueprints tagged `nhi-lab-seed` and the agents whose parent blueprint is one of them. The seeder discards each secret as it is created; no secret value is stored or printed.
 
 ## Known limitations
 
@@ -98,6 +98,7 @@ Full list: [`docs/risk-model.md`](docs/risk-model.md) section 6 and [`TODO.md`](
 │   ├── New-NhiLabSeed.ps1        # creates 11 tagged lab identities (writes to the tenant)
 │   ├── New-AgentIdSeed.ps1       # Phase 4: 2 agent blueprints + 4 agent identities (writes)
 │   ├── Remove-NhiLabSeed.ps1     # removes only objects tagged nhi-lab-seed
+│   ├── Remove-AgentIdSeed.ps1    # Phase 4: removes the agent seeds (tag + parent link; -Purge opt-in)
 │   └── expected-findings.json    # answer key + score constraints
 ├── scanner/
 │   ├── Invoke-NhiInventory.ps1   # read-only inventory -> JSON
