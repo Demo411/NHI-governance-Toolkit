@@ -5,3 +5,5 @@ These are sanitized outputs from two real scans of the lab tenant, taken before 
 **Rule: no tenant identifiers in the repo.** Examples carry placeholders for the tenant, the domain, the admin account, app IDs and credential key IDs. (The GitHub owner and repo IDs inside the immutable FIC subject are public GitHub values, not tenant identifiers, so they stay.)
 
 What changed in Phase 5: `seed-02-before.json` and `seed-02-after.json` hold `seed-02-longsecret` before and after its client secret was replaced by GitHub Actions OIDC federation (NHI-002 + NHI-007, score 20, validator state `with_secret`; then no secret, one federated credential with the immutable subject, no findings, score 0, state `federated`). Same sanitizing rules; each file also shows the inventory facts the validator pivoted on. The before scan predates scanner 0.3.0, so it did not collect federated credentials.
+
+Earlier commits still contain the lab app and key IDs; they are non-secret identifiers, so history was not rewritten.
