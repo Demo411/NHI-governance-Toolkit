@@ -1,6 +1,6 @@
 # NHI Governance Toolkit
 
-A read-only governance toolkit for non-human identities (app registrations and service principals) in Microsoft Entra ID. It inventories every one, including the credentials hidden on service principals that app-registration-only tooling misses, scores each against documented rules mapped to NIST SP 800-53, and checks its own results against a deliberately seeded answer key.
+A read-only governance toolkit for non-human identities (app registrations and service principals) in Microsoft Entra ID. It **finds** them, **scores** each against documented rules, **fixes** the worst pattern (stored client secrets) with GitHub Actions OIDC federation, and **maps** every finding to NIST SP 800-53 controls. Built and measured on a lab tenant, never production.
 
 ```mermaid
 flowchart LR
@@ -12,20 +12,40 @@ flowchart LR
     F --> G{{"exit 0 = PASS<br/>exit 1 = FAIL"}}
 ```
 
-This is the short view. [`docs/architecture.md`](docs/architecture.md) has four diagrams: the read-only pipeline, the write path with its human checkpoints, the Phase 5 OIDC federation flow, and the Entra Agent ID model.
+Short view. [`docs/architecture.md`](docs/architecture.md) has four diagrams: the read-only pipeline, the write path with its human checkpoints, the Phase 5 OIDC federation flow, and the Entra Agent ID model.
+
+## Why
+
+The lab tenant holds **101 non-human identities**: 84 are Microsoft's own and 17 are this tenant's, all of them seeded for this project (11 app registrations, 2 agent blueprints, 4 agent identities). A secret added directly to a service principal never appears if you look only at app registrations, and an agent's credential can sit on a different object from its permissions. This toolkit inventories both objects, scores what it finds, and checks its own scoring against a known answer key.
 
 ## Results
 
-Current (Phase 5), measured on the lab tenant (inventory `20261021-021751Z`):
+Latest scan, inventory `20261021-021751Z`:
 
-- **Phase 5, secret replaced by federation:** `seed-02-longsecret` went from a 730-day client secret (NHI-002 + NHI-007, score **20**) to **no secret** and a GitHub Actions OIDC federated credential, score **0**. The validator resolves its state as `federated` (no secret, and a credential matching issuer, immutable subject and audience exactly) and prints `RESULT: PASS` (17 seeds, C1-C8). Identities with findings went 11 to 10; nothing else changed. Proof the federation works: workflow run `oidc-demo #2` logged in with `idtyp` = app, `appidacr` = 2 (the token was proved by a federated assertion, not a secret) and `appid` matching. See [`examples/seed-02-before.json`](examples/seed-02-before.json) and [`examples/seed-02-after.json`](examples/seed-02-after.json).
-- **Lab finding:** the first federated credential used the classic name-based subject and failed with AADSTS700213, because GitHub now sends an *immutable* subject (`repo:<owner>@<id>/<repo>@<id>:...`) for repositories created after 2026-07-15. The credential was replaced with the immutable form, which is also the stronger trust: names can be recycled, numeric IDs cannot. See [`docs/risk-model.md`](docs/risk-model.md) section 10.
-- **Four locks on the federated path:** (1) the exact immutable FIC subject (owner and repo IDs plus `environment:lab`, no wildcards); (2) a main-only deployment branch rule on the `lab` environment; (3) a required reviewer (`Demo411`) on `lab`, with administrator bypass switched off; (4) a `workflow_dispatch`-only trigger, so the workflow runs only when someone starts it by hand.
-- **101 identities** scored, including 2 agent blueprints and 4 agent identities (Entra Agent ID). **17 seeded identities** match the answer key and all **10 score constraints** hold: `RESULT: PASS`.
-- The risky blueprint (an active client secret above an agent holding `Mail.ReadWrite`) scores **40** (NHI-009 25 + COMBO-U3 15) and ranks second of all identities.
-- **120 Pester tests** on synthetic inventories (no tenant needed), **mutation-checked**: loosening the NHI-002 boundary, the NHI-003 expiry comparison, the resolved-appId check, or the ordinal output ordering each makes tests fail.
-- **History (Phase 3, inventory `20261012-130643Z`):** 89 identities scored (89 service principals, 11 of which also have an app registration); 11 seeded identities; 9 identities had findings, all 9 seeds. 7 of 8 rules active (NHI-006 deferred). All 11 seeds matched the answer key and all 7 score constraints held. 52 Pester tests.
-- **Reproducibility demo:** `seed-03-expiring` has a 1-day secret. Scored on a scan taken before it expired it gets NHI-007 and **10** points; scored on a later scan it gets NHI-003 and **3**. Re-running the engine on the same inventory gives a findings file with the identical SHA-256, and across the two findings files `seed-03-expiring` was the only identity whose rules or score changed. See [`examples/`](examples/).
+| | |
+|---|---|
+| Identities scored | **101** (including 2 Entra Agent ID blueprints and 4 agent identities); **10** have findings |
+| Self-check | **17 seeds** match the answer key, all **10 score constraints** hold: `RESULT: PASS` |
+| Tests | **120 Pester tests** on synthetic inventories, no tenant needed, mutation-checked |
+| Remediation | `seed-02-longsecret`: client secret replaced by OIDC federation, score **20 to 0**, `appidacr` 2 proof |
+
+## Three things worth reading
+
+**1. Risk that sits on two objects.** An agent identity has no credentials of its own: its blueprint holds a secret and exchanges it for the agent's token. Scored one identity at a time, the blueprint has "a secret" (NHI-009) and the agent has `Mail.ReadWrite` (NHI-004): two findings that look unrelated. **COMBO-U3** links them through the parent link and adds 15 to the blueprint, so it scores **40** and ranks second of 101. A harmless sibling agent keeps no finding. See [`docs/risk-model.md`](docs/risk-model.md) section 9.
+
+**2. A live finding, and why the fix is the stronger trust.** The first federated credential used the classic name-based subject and the workflow failed with AADSTS700213: GitHub now sends an *immutable* subject (`repo:<owner>@<id>/<repo>@<id>:...`) for repositories created after 2026-07-15. Replacing the credential with the immutable form is also the better trust, because names can be recycled and numeric IDs cannot. The federated path has four locks: the exact immutable subject, a main-only branch rule on the `lab` environment, a required reviewer (administrator bypass off), and a `workflow_dispatch`-only trigger. Only after the federated login worked (`idtyp` app, `appidacr` 2) was the secret deleted. See [`docs/risk-model.md`](docs/risk-model.md) section 10 and [`examples/seed-02-before.json`](examples/seed-02-before.json) / [`seed-02-after.json`](examples/seed-02-after.json).
+
+**3. The toolkit tests itself.** A hand-written answer key (`seed/expected-findings.json`) says what each seeded identity must produce, and the validator compares it with the findings. Rules read the scan's own start time, never the wall clock, and each findings file records the SHA-256 of its inputs. Re-run on 2026-10-21: scoring engine 0.2.0 on inventory `20261021-021751Z`, run twice into separate folders, gave byte-identical findings files (SHA-256 `eee1124f303943f10ae9e965660750d641e557cede9189b7d2af6bf36a3f62a2`), the same hash as the findings file from the live scan. Demo: `seed-03-expiring` has a 1-day secret; scored before it expired it gets NHI-007 and **10** points, after it NHI-003 and **3**, and it was the only identity whose result changed. See [`examples/`](examples/).
+
+## Governance and evidence
+
+The rules map to four NIST SP 800-53 Rev. 5 base controls: **AC-2** (NHI-001, 003, 010, 011; NHI-006 is deferred), **AC-6** (NHI-004, 005, 008 and the combination uplifts), **IA-5** (NHI-002, 003, 007, 009 and the Phase 5 federation) and **CM-8** (the inventory itself).
+
+- **Evidence produced:** the inventory (every identity with `ownerType`, `identityType`, owners, sponsors, parent links, credential metadata, permissions, `scanMetadata` counts) and the findings (rule ID, severity, points, NIST control and per-credential or per-permission evidence), tied together by SHA-256 hashes of the inventory and rules. No secret value is ever read or stored.
+- **Re-performance:** an auditor checks the two hashes, re-runs the scoring engine on the same inventory, and runs the validator, which re-hashes before judging. The original lab inventory contains tenant data and is not in the repo, so outsiders can re-perform on the synthetic inventories in `tests/`.
+- **Reading it correctly:** this **provides evidence for** the controls, point-in-time and for a lab tenant; it is **not a compliance attestation**. The AC-6 rules are indicators that a permission is commonly high-risk, not proof that access is unnecessary.
+
+Clause-by-clause mapping, limitations and gaps per control: [`docs/controls-mapping.md`](docs/controls-mapping.md).
 
 ## Rules
 
@@ -83,6 +103,12 @@ Step 3 only applies to a tenant that was seeded; on any other tenant, use steps 
 
 `seed/New-NhiLabSeed.ps1` deliberately creates risky identities (an ownerless app, a 2-year secret, apps granted `Directory.ReadWrite.All` and `RoleManagement.ReadWrite.Directory`, a service principal holding Application Administrator). It needs write scopes and changes the tenant. **Use a dedicated test tenant only, never production.** Run it with `-WhatIf` first. `seed/Remove-NhiLabSeed.ps1` removes only objects tagged `nhi-lab-seed` (and carrying the matching `notes`). Agent ID objects have no `notes`, so `seed/Remove-AgentIdSeed.ps1` removes those instead: blueprints tagged `nhi-lab-seed` and the agents whose parent blueprint is one of them. The seeder discards each secret as it is created; no secret value is stored or printed.
 
+## Scope
+
+- A **lab tenant**, one point in time. Not a production design and not a compliance attestation.
+- Findings are indicators for review. They do not prove a control is met or failed.
+- Entra Agent ID coverage is inventory, sponsors and permissions only; agent Conditional Access and ID Protection need licensing the lab does not have.
+
 ## Known limitations
 
 - NHI-006 (no sign-in in 90+ days) is deferred: how to treat a null sign-in value is undecided.
@@ -112,22 +138,37 @@ Full list: [`docs/risk-model.md`](docs/risk-model.md) section 6 and [`TODO.md`](
 │   └── risk-rules.json           # rules, tiers, uplift, NIST mapping
 ├── .github/workflows/oidc-demo.yml  # Phase 5: manual OIDC login proof (no secret)
 ├── remediation/
-│   ├── Add-NhiFederatedCredential.ps1  # Phase 5: adds the GitHub FIC (writes; -WhatIf first)
+│   ├── Add-NhiFederatedCredential.ps1  # Phase 5: adds or updates the GitHub FIC (writes; -WhatIf first)
 │   └── Remove-NhiAppSecret.ps1   # Phase 5: deletes one secret, only if the FIC exists
 ├── tests/                        # Pester 5, synthetic inventories
 ├── examples/                     # sanitized before/after outputs
-└── docs/risk-model.md            # why each rule and weight exists
+└── docs/
+    ├── architecture.md           # four Mermaid diagrams
+    ├── controls-mapping.md       # rules and evidence mapped to AC-2, AC-6, IA-5, CM-8
+    └── risk-model.md             # why each rule and weight exists
 ```
 
 ## Roadmap
 
-- **Phase 4 (done):** Entra Agent ID. 2 blueprints and 4 agent identities seeded, inventoried with sponsors and parent links, scored (NHI-009/010/011, COMBO-U3) and validated: live inventory `20261019-231744Z`, `RESULT: PASS`.
-- **Phase 5 (done):** `seed-02-longsecret`'s client secret replaced by GitHub Actions OIDC federation, secret deleted, re-scanned: score 20 to 0, validator `RESULT: PASS`, `appidacr` 2 proof. Future work: rules for broad or mutable GitHub FIC subjects.
-- **Phase 6:** controls mapping ([`docs/controls-mapping.md`](docs/controls-mapping.md), done), architecture diagrams ([`docs/architecture.md`](docs/architecture.md), done), write-up.
+All six phases are done: inventory, scoring, Entra Agent ID, OIDC remediation, controls mapping and architecture, and this write-up. Open work is tracked in [`TODO.md`](TODO.md):
+
+- A scanner rule for broad or mutable GitHub federated-credential subjects (the scanner records the facts today, no rule judges them).
+- NHI-006 (no sign-in in 90+ days), deferred until the null sign-in treatment is decided.
+- Researching the hand-maintained permission and role lists.
+
+<details>
+<summary>History: per-phase results</summary>
+
+- **Phase 5 (inventory `20261021-021751Z`):** `seed-02-longsecret` went from a 730-day client secret (NHI-002 + NHI-007, score 20) to no secret and one GitHub Actions federated credential, score 0. The validator resolves its state as `federated` (no secret, and a credential matching issuer, immutable subject and audience exactly). Identities with findings went 11 to 10; nothing else changed. Workflow run `oidc-demo #2` printed `idtyp` app, `appidacr` 2 and `appid` match true.
+- **Phase 4 (inventory `20261019-231744Z`):** 101 identities scored, including 2 blueprints and 4 agent identities; 17 seeds and all 10 constraints held. 117 Pester tests. The risky blueprint scored 40 (NHI-009 25 + COMBO-U3 15).
+- **Phase 3 (inventory `20261012-130643Z`):** 89 identities scored (89 service principals, 11 of which also have an app registration); 11 seeded identities; 9 identities had findings, all 9 seeds. 7 of 8 rules active (NHI-006 deferred). All 11 seeds matched the answer key and all 7 score constraints held. 52 Pester tests.
+- **Mutation checks:** loosening the NHI-002 boundary, the NHI-003 expiry comparison, the resolved-appId check, or the ordinal output ordering each makes tests fail.
+
+</details>
 
 ## How this was built
 
-Developed with Claude Code as an AI pair-programmer; the design decisions, the risk model and the review are the project owner's.
+Built with Claude Code as an assistant. All design decisions are mine and are documented with their reasons in [`docs/risk-model.md`](docs/risk-model.md).
 
 ## License
 
