@@ -38,7 +38,7 @@ param(
     [Parameter(Mandatory)][guid]$KeyId,
     [string]$AppDisplayName = 'seed-02-longsecret',
     [string]$Issuer         = 'https://token.actions.githubusercontent.com',
-    [string]$Subject        = 'repo:Demo411/NHI-governance-Toolkit:environment:lab',
+    [string]$Subject        = 'repo:Demo411@181002116/NHI-governance-Toolkit@1415658131:environment:lab',
     [string]$Audience       = 'api://AzureADTokenExchange',
     [switch]$Force
 )

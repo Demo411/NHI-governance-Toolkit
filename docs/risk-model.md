@@ -484,7 +484,7 @@ GitHub or in Entra, so there is nothing to rotate or leak.
 | Field | Value | Why |
 |-------|-------|-----|
 | issuer | `https://token.actions.githubusercontent.com` | GitHub's OIDC issuer |
-| subject | `repo:Demo411/NHI-governance-Toolkit:environment:lab` | exact match, no wildcards; the `environment:lab` form ties the trust to one GitHub environment that has a required reviewer |
+| subject | `repo:Demo411@181002116/NHI-governance-Toolkit@1415658131:environment:lab` | exact match, no wildcards; the `environment:lab` form ties the trust to one GitHub environment that has a required reviewer; the `@<id>` parts are GitHub's immutable owner and repo IDs (see "Lab finding" below) |
 | audience | `api://AzureADTokenExchange` | the audience Entra expects for token exchange |
 
 No rule is added. The scanner records FICs as facts; the existing NHI-002 and NHI-007 simply stop
@@ -498,6 +498,33 @@ GET-only helper as everything else, needing only `Application.Read.All`. The lis
 `name`, `issuer`, `subject` and `audiences` are kept. A failed lookup stores `null` plus a warning;
 `null` means "unknown" and is deliberately different from `[]` ("confirmed none"). Inventories from
 before v0.3.0 have no `federatedIdentityCredentials` property at all.
+
+### Lab finding: the name-based subject was already obsolete (2026-10-20)
+
+The first design used the classic subject `repo:Demo411/NHI-governance-Toolkit:environment:lab`.
+The first workflow run failed with **AADSTS700213** (no matching federated identity credential),
+which was the correct outcome: GitHub now sends an **immutable subject** for repositories created
+after 2026-07-15, `repo:Demo411@181002116/NHI-governance-Toolkit@1415658131:environment:lab`, so the
+name-based credential could never match. Nothing was weakened and no secret was touched; the
+secret was still in place and the failure was a lockout of the new path only.
+
+Why the immutable form is the better trust, not just the one that works: a name-based subject
+identifies a repo by *names*, and names can be recycled. If the repository or organisation were
+deleted or renamed and another party registered the same name, their workflow would present the same
+subject and Entra would accept it. The numeric owner and repository IDs never repeat, so the
+credential stays bound to the one repository. The IDs are public values, so they are committed.
+The old credential is therefore the **weaker** trust and is replaced, not kept alongside.
+
+How the toolkit handles it: `Add-NhiFederatedCredential.ps1` now PATCHes the `subject` of an existing
+credential with the same name (same issuer and audience), and `-WhatIf` prints `old subject` and
+`new subject`. A different issuer or audience under the same name is still refused, because that is a
+different trust rather than a stale subject. The answer key's `expected_federation.subject` and
+`Remove-NhiAppSecret.ps1`'s precondition use the immutable form, so a leftover name-based credential
+does not count as federated. A scanner rule for GitHub-issuer credentials whose subject lacks the
+`@<id>` parts (subject-recycling risk) is recorded in TODO.md, not built.
+
+Refs: Microsoft Learn "workload-identities-github-immutable-subjects"; GitHub changelog
+2026-04-23 "Immutable subject claims for GitHub Actions OIDC tokens".
 
 ### The state-dependent answer key
 
@@ -544,7 +571,7 @@ the `remediation/.github/...` path in the original layout would never execute.
 
 | Script | Writes | Guard |
 |--------|--------|-------|
-| `Add-NhiFederatedCredential.ps1` | `POST .../federatedIdentityCredentials` | app confirmed by tag **and** notes marker; exact subject (no `*`/`?`); identical FIC is a no-op; same name with different values is refused |
+| `Add-NhiFederatedCredential.ps1` | `POST .../federatedIdentityCredentials`, or `PATCH .../{id}` (subject only) | app confirmed by tag **and** notes marker; exact subject (no `*`/`?`); identical FIC is a no-op; same name with a different subject is PATCHed (one credential, `-WhatIf` shows old -> new); same name with a different issuer or audience is refused |
 | `Remove-NhiAppSecret.ps1` | `POST .../removePassword` (one `keyId`) | app confirmed by tag and notes; **a matching FIC must already exist**; the `keyId` must be a secret on that app; prints keyId and secret display name only |
 
 Both support `-WhatIf` (which requests only `Application.Read.All`), request the narrowest delegated

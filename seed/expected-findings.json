@@ -24,7 +24,7 @@
         "federated":   { "when": "no client secret at all AND at least one federated credential matching expected_federation exactly (case-sensitive; issuer, subject and the whole audiences set)", "expected_rules": [] },
         "expected_federation": {
           "issuer": "https://token.actions.githubusercontent.com",
-          "subject": "repo:Demo411/NHI-governance-Toolkit:environment:lab",
+          "subject": "repo:Demo411@181002116/NHI-governance-Toolkit@1415658131:environment:lab",
           "audiences": ["api://AzureADTokenExchange"]
         }
       },

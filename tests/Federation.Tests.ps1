@@ -51,8 +51,8 @@ Describe 'seed-02: state-dependent expectation (engine -> validator)' {
     }
 
     It 'a near-miss FIC does not count: <Case>' -ForEach @(
-        @{ Case = 'subject differs only by case';   Fic = { New-SynFic -Subject 'repo:demo411/NHI-governance-Toolkit:environment:lab' } }
-        @{ Case = 'wildcard-ish branch subject';    Fic = { New-SynFic -Subject 'repo:Demo411/NHI-governance-Toolkit:ref:refs/heads/main' } }
+        @{ Case = 'subject differs only by case';   Fic = { New-SynFic -Subject 'repo:demo411@181002116/NHI-governance-Toolkit@1415658131:environment:lab' } }
+        @{ Case = 'wildcard-ish branch subject';    Fic = { New-SynFic -Subject 'repo:Demo411@181002116/NHI-governance-Toolkit@1415658131:ref:refs/heads/main' } }
         @{ Case = 'wrong issuer';                   Fic = { New-SynFic -Issuer 'https://sts.windows.net/00000000-0000-0000-0000-000000000000/' } }
         @{ Case = 'wrong audience';                 Fic = { New-SynFic -Audiences @('api://SomethingElse') } }
         @{ Case = 'extra audience on top of the right one'; Fic = { New-SynFic -Audiences @('api://AzureADTokenExchange', 'api://SomethingElse') } }
@@ -110,7 +110,7 @@ Describe 'Real answer key: seed-02 block' {
     It 'carries exactly the design-decision values (exact subject, no wildcards)' {
         $f = $script:real.apps.'seed-02-longsecret'.state_dependent.expected_federation
         $f.issuer | Should -BeExactly 'https://token.actions.githubusercontent.com'
-        $f.subject | Should -BeExactly 'repo:Demo411/NHI-governance-Toolkit:environment:lab'
+        $f.subject | Should -BeExactly 'repo:Demo411@181002116/NHI-governance-Toolkit@1415658131:environment:lab'
         @($f.audiences) | Should -Be @('api://AzureADTokenExchange')
         $f.subject | Should -Not -Match '[*?]'
     }
@@ -145,7 +145,7 @@ Describe 'Scanner FIC collection (functions extracted from Invoke-NhiInventory.p
             if ($script:graphMode -eq 'throw') { throw 'Forbidden' }
             , @(
                 @{ id = 'fic-id-1'; name = 'github'; description = 'free text'; issuer = 'https://token.actions.githubusercontent.com'
-                   subject = 'repo:Demo411/NHI-governance-Toolkit:environment:lab'; audiences = @('api://AzureADTokenExchange') }
+                   subject = 'repo:Demo411@181002116/NHI-governance-Toolkit@1415658131:environment:lab'; audiences = @('api://AzureADTokenExchange') }
             )
         }
     }
@@ -158,7 +158,7 @@ Describe 'Scanner FIC collection (functions extracted from Invoke-NhiInventory.p
         $r = Get-FederatedCredentials -ObjectId 'obj-1' -Label 'application x'
         @($r).Count | Should -Be 1
         (@($r[0].Keys) -join ',') | Should -Be 'name,issuer,subject,audiences'
-        $r[0].subject | Should -Be 'repo:Demo411/NHI-governance-Toolkit:environment:lab'
+        $r[0].subject | Should -Be 'repo:Demo411@181002116/NHI-governance-Toolkit@1415658131:environment:lab'
         $script:lastUri | Should -Be 'https://graph.microsoft.com/v1.0/applications/obj-1/federatedIdentityCredentials'
     }
     It 'a failed lookup returns $null (unknown) and records a warning, it does not throw' {

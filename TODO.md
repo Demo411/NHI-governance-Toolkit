@@ -44,6 +44,11 @@
       `repo:org/repo:ref:refs/heads/main`, `pull_request` subjects, a missing environment, or an
       issuer that is not a known OIDC provider). Needs FIC data from several apps first; today the
       scanner only records the facts.
+- [ ] New rule idea: "GitHub FIC without immutable IDs" (subject recycling). A federated credential
+      whose issuer is `https://token.actions.githubusercontent.com` and whose subject lacks the
+      `owner@<id>/repo@<id>` parts is name-based: if the repo or org is deleted, renamed or
+      re-created, another owner of that name can mint a token the credential accepts. Found live in
+      Phase 5 (risk-model.md section 10). Detectable from the facts the scanner already records.
 - [ ] Consider moving azure/login from v2.3.1 to v3.x as a separate, reviewed change (pinned by SHA).
 - [ ] Check whether the FIC listing works on Agent ID blueprints (the scanner warns if not).
 

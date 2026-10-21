@@ -18,12 +18,16 @@
       - The subject must be exact: no '*' or '?' (Entra does not support wildcards in a FIC subject,
         and a broad subject would let more than one workflow act as the app).
       - If an identical FIC already exists the script reports it and changes nothing.
-      - If the FIC name is already used by a different trust, it refuses instead of overwriting.
+      - If the FIC name is already used with the same issuer and audience but a DIFFERENT subject, it
+        replaces that subject with one PATCH (one credential, never two); -WhatIf shows old -> new.
+      - If the name is used with a different issuer or audience, it refuses instead of overwriting.
 
     Graph endpoints:
       GET  /v1.0/applications?$filter=displayName eq '...'           find and confirm the app
       GET  /v1.0/applications/{id}/federatedIdentityCredentials      existing trusts
-      POST /v1.0/applications/{id}/federatedIdentityCredentials      create the trust (the only write)
+      POST  /v1.0/applications/{id}/federatedIdentityCredentials         create the trust
+      PATCH /v1.0/applications/{id}/federatedIdentityCredentials/{fic}   replace the subject of an existing one
+      (a run does at most one of the two writes)
 
     Scopes (delegated): Application.Read.All under -WhatIf; Application.ReadWrite.All otherwise
     (the narrowest delegated permission Microsoft lists for creating a FIC). Reads and prints no
@@ -43,7 +47,10 @@ param(
     [string]$AppDisplayName = 'seed-02-longsecret',
     [string]$FicName        = 'github-actions-lab',
     [string]$Issuer         = 'https://token.actions.githubusercontent.com',
-    [string]$Subject        = 'repo:Demo411/NHI-governance-Toolkit:environment:lab',
+    # Immutable subject format: owner and repo carry their numeric IDs (public values), so a deleted and
+    # re-created repo or a renamed owner can never inherit this trust. GitHub sends this form by default
+    # for repos created after 2026-07-15.
+    [string]$Subject        = 'repo:Demo411@181002116/NHI-governance-Toolkit@1415658131:environment:lab',
     [string]$Audience       = 'api://AzureADTokenExchange'
 )
 
@@ -97,8 +104,37 @@ try {
         Write-Host "Already present: federated credential '$($identical[0]['name'])' with this issuer, subject and audience. Nothing to do." -ForegroundColor Green
         return
     }
-    if (@($existing | Where-Object { $_['name'] -eq $FicName }).Count -gt 0) {
-        throw "A federated credential named '$FicName' already exists with DIFFERENT values. Refusing to overwrite; pick another -FicName or review it in the portal."
+    $sameName = @($existing | Where-Object { $_['name'] -eq $FicName })
+    if ($sameName.Count -gt 0) {
+        $old = $sameName[0]
+        $oldSubject = [string]$old['subject']   # copied now: the read-back below must not depend on $old
+        # Only the subject may be replaced. A different issuer or audience under the same name is a
+        # different kind of trust, not a stale subject, so a person has to look at it.
+        $sameIssuerAud = $old['issuer'] -ceq $Issuer -and ((@($old['audiences']) | Sort-Object -CaseSensitive) -join '|') -ceq $Audience
+        if (-not $sameIssuerAud) {
+            throw "A federated credential named '$FicName' already exists with a different issuer or audience (not just a different subject). Refusing to change it; pick another -FicName or review it in the portal."
+        }
+
+        # ------------------------------------------------------ 3a. replace the subject (PATCH, not a second FIC)
+        # Why replace instead of adding: the old subject can never match a token (GitHub now sends the
+        # immutable owner-id/repo-id form), so keeping it adds a weaker, name-based trust for nothing.
+        Write-Host "`nWill UPDATE federated identity credential '$FicName' (subject only):" -ForegroundColor Yellow
+        Write-Host "  old subject  $oldSubject"
+        Write-Host "  new subject  $Subject"
+        Write-Host '  issuer and audience are unchanged. The client secret is NOT touched.'
+
+        if ($PSCmdlet.ShouldProcess("application '$($app['displayName'])'", "Replace subject of federated credential '$FicName': $oldSubject -> $Subject")) {
+            $patchBody = @{ subject = $Subject } | ConvertTo-Json
+            Invoke-MgGraphRequest -Method PATCH -Uri "$ficUri/$($old['id'])" -Body $patchBody -ContentType 'application/json' | Out-Null
+
+            $after = @((Invoke-MgGraphRequest -Method GET -Uri $ficUri -OutputType Hashtable)['value'])
+            $named = @($after | Where-Object { $_['name'] -eq $FicName -and $_['subject'] -ceq $Subject })
+            if ($named.Count -ne 1 -or @($after | Where-Object { $_['subject'] -ceq $oldSubject }).Count -gt 0) {
+                throw 'Updated, but the read-back did not show exactly the new subject and no old one. Check the app in the portal.'
+            }
+            Write-Host "Updated and verified: '$($named[0]['name'])'." -ForegroundColor Green
+        }
+        return
     }
 
     # ------------------------------------------------------------ 3. show and create

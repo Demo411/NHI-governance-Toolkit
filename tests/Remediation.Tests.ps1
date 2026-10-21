@@ -34,6 +34,11 @@ function Invoke-MgGraphRequest {
         $b = $Body | ConvertFrom-Json -AsHashtable
         $global:state.fics = @($global:state.fics) + @($b); return $null
     }
+    if ($Method -eq 'PATCH' -and $Uri -match '/federatedIdentityCredentials/([^/]+)$') {
+        $fid = $Matches[1]; $b = $Body | ConvertFrom-Json -AsHashtable
+        foreach ($x in @($global:state.fics)) { if ($x.id -eq $fid) { foreach ($k in $b.Keys) { $x[$k] = $b[$k] } } }
+        return $null
+    }
     if ($Method -eq 'POST' -and $Uri -match '/removePassword$') {
         $k = ($Body | ConvertFrom-Json).keyId
         $app.passwordCredentials = @($app.passwordCredentials | Where-Object { $_.keyId -ne $k }); return $null
@@ -59,8 +64,8 @@ try { & $ScriptPath @splat *> $null } catch { $threw = $_.Exception.Message }
         @{ apps = @($a); fics = @($Fics) }
     }
     function script:ConvertTo-Fic {
-        param([string]$Subject = 'repo:Demo411/NHI-governance-Toolkit:environment:lab')
-        @{ name = 'github-actions-lab'; issuer = 'https://token.actions.githubusercontent.com'; subject = $Subject; audiences = @('api://AzureADTokenExchange') }
+        param([string]$Subject = 'repo:Demo411@181002116/NHI-governance-Toolkit@1415658131:environment:lab')
+        @{ id = 'fic-object-id'; name = 'github-actions-lab'; issuer = 'https://token.actions.githubusercontent.com'; subject = $Subject; audiences = @('api://AzureADTokenExchange') }
     }
     function script:Invoke-Harness {
         param([string]$Script, [hashtable]$State, [hashtable]$Arguments = @{})
@@ -93,9 +98,31 @@ Describe 'Add-NhiFederatedCredential.ps1' -Skip:(-not $haveGraphAuth) {
         $r.threw | Should -BeNullOrEmpty
         @(Get-Writes $r).Count | Should -Be 0
     }
-    It 'the same FIC name with different values: refuses' {
-        $r = Invoke-Harness $script:addScript (New-State -Fics @(ConvertTo-Fic -Subject 'repo:x/y:environment:z'))
-        $r.threw | Should -Match 'DIFFERENT values'
+    It 'the same FIC name with an OLD name-based subject: one PATCH of the subject, no POST, write scope' {
+        $old = 'repo:Demo411/NHI-governance-Toolkit:environment:lab'
+        $r = Invoke-Harness $script:addScript (New-State -Fics @(ConvertTo-Fic -Subject $old))
+        $r.threw | Should -BeNullOrEmpty
+        $w = @(Get-Writes $r)
+        $w.Count | Should -Be 1
+        $w[0] | Should -Match '^PATCH https://graph.microsoft.com/v1.0/applications/app-object-id/federatedIdentityCredentials/fic-object-id$'
+        @($r.scopes) | Should -Be @('Application.ReadWrite.All')
+    }
+    It '-WhatIf with an old subject: reads only, read scope only, writes nothing' {
+        $r = Invoke-Harness $script:addScript (New-State -Fics @(ConvertTo-Fic -Subject 'repo:Demo411/NHI-governance-Toolkit:environment:lab')) @{ WhatIf = $true }
+        $r.threw | Should -BeNullOrEmpty
+        @(Get-Writes $r).Count | Should -Be 0
+        @($r.scopes) | Should -Be @('Application.Read.All')
+    }
+    It 'the same FIC name with a different ISSUER: refuses, no write' {
+        $fic = ConvertTo-Fic -Subject 'repo:x/y:environment:z'; $fic.issuer = 'https://sts.windows.net/x/'
+        $r = Invoke-Harness $script:addScript (New-State -Fics @($fic))
+        $r.threw | Should -Match 'different issuer or audience'
+        @(Get-Writes $r).Count | Should -Be 0
+    }
+    It 'the same FIC name with a different AUDIENCE: refuses, no write' {
+        $fic = ConvertTo-Fic -Subject 'repo:x/y:environment:z'; $fic.audiences = @('api://Other')
+        $r = Invoke-Harness $script:addScript (New-State -Fics @($fic))
+        $r.threw | Should -Match 'different issuer or audience'
         @(Get-Writes $r).Count | Should -Be 0
     }
     It 'an app without the nhi-lab-seed tag is refused' {

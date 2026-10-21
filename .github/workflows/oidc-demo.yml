@@ -1,7 +1,8 @@
 # Phase 5 proof: log in to Entra with a GitHub-issued OIDC token instead of a client secret.
 #
 # How it works: GitHub mints a short-lived JWT for this job (issuer token.actions.githubusercontent.com,
-# subject repo:Demo411/NHI-governance-Toolkit:environment:lab). azure/login hands it to Entra as a
+# subject repo:Demo411@181002116/NHI-governance-Toolkit@1415658131:environment:lab, the immutable
+# owner-id/repo-id form GitHub sends for repos created after 2026-07-15). azure/login hands it to Entra as a
 # client assertion. Entra compares it to the federated identity credential on the app registration;
 # if issuer, subject and audience match EXACTLY, it issues an access token. No secret is stored.
 #

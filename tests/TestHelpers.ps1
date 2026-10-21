@@ -57,7 +57,7 @@ function New-SynFic {
     param(
         [string]$Name = 'github-oidc-lab',
         [string]$Issuer = 'https://token.actions.githubusercontent.com',
-        [string]$Subject = 'repo:Demo411/NHI-governance-Toolkit:environment:lab',
+        [string]$Subject = 'repo:Demo411@181002116/NHI-governance-Toolkit@1415658131:environment:lab',
         [string[]]$Audiences = @('api://AzureADTokenExchange')
     )
     [ordered]@{ name = $Name; issuer = $Issuer; subject = $Subject; audiences = @($Audiences) }
@@ -241,7 +241,7 @@ function Get-Seed02Expectation {
                 federated   = [ordered]@{ expected_rules = @() }
                 expected_federation = [ordered]@{
                     issuer = 'https://token.actions.githubusercontent.com'
-                    subject = 'repo:Demo411/NHI-governance-Toolkit:environment:lab'
+                    subject = 'repo:Demo411@181002116/NHI-governance-Toolkit@1415658131:environment:lab'
                     audiences = @('api://AzureADTokenExchange')
                 }
             }
