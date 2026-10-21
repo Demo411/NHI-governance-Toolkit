@@ -68,7 +68,7 @@ flowchart TB
     end
     subgraph CLEAN ["Seed cleanup"]
         D1["seed/Remove-NhiLabSeed.ps1<br/>tag AND notes marker required"]
-        D2["seed/Remove-AgentIdSeed.ps1<br/>tag, or parent link to a tagged blueprint"]
+        D2["seed/Remove-AgentIdSeed.ps1<br/>blueprint: tag + blueprint type;<br/>agent: parent link to such a blueprint"]
     end
     subgraph REM ["Remediation (Phase 5)"]
         A1["remediation/Add-NhiFederatedCredential.ps1<br/>create or update one FIC"]
@@ -97,7 +97,6 @@ flowchart TB
     N1 --> TEN
     N2 --> TEN
     A1 --> TEN
-    A2 --> TEN
     H2 --> TEN
 ```
 
@@ -106,7 +105,7 @@ What to notice:
 - **Everything that writes is here, and none of it is the scanner.** The scanner, scorer and validator never write; they are diagram 1.
 - **Preview first.** All six scripts support `-WhatIf`. Under `-WhatIf`, the remediation scripts request only `Application.Read.All`, so a dry run needs no write consent.
 - **Typing DELETE.** The two cleanup scripts and `Remove-NhiAppSecret.ps1` print exactly what will be removed and require typing `DELETE` (case-sensitive); `-Force` skips the prompt for scripted use. For `Remove-NhiAppSecret.ps1` that is two checkpoints in a row: read the `-WhatIf` preview (keyId, secret display name, the FIC it depends on), then type `DELETE`. The seed cleanup soft-deletes and then purges only the objects it collected, never "everything in the recycle bin".
-- **Scope of deletion.** `Remove-NhiLabSeed.ps1` removes only objects carrying both the `nhi-lab-seed` tag and the notes marker. Agent ID objects have no `notes` property, so `Remove-AgentIdSeed.ps1` identifies them by tag or by the parent link (`agentIdentityBlueprintId`) to a tagged blueprint, never by display name.
+- **Scope of deletion.** `Remove-NhiLabSeed.ps1` removes only objects carrying both the `nhi-lab-seed` tag and the notes marker. Agent ID objects have no `notes` property, so `Remove-AgentIdSeed.ps1` identifies a blueprint by the tag plus the blueprint type, and an agent by its parent link (`agentIdentityBlueprintId`) to such a blueprint, never by display name.
 - **Order matters in remediation.** `Remove-NhiAppSecret.ps1` has its own guard and refuses to delete a secret unless the matching federated credential already exists, so the secret cannot be removed before its replacement is in place.
 - **No secret is written anywhere.** Seeded secrets are created and their values discarded immediately; the scripts print key IDs and display names only.
 
@@ -132,6 +131,8 @@ sequenceDiagram
     GH->>GI: request OIDC token (id-token: write)
     GI-->>GH: JWT, subject repo:Demo411@181002116/NHI-governance-Toolkit@1415658131:environment:lab
     GH->>EN: azure/login presents the JWT as a client assertion
+    EN->>GI: fetch OIDC discovery + signing keys (JWKS)
+    Note over EN: verify JWT signature, issuer, expiry
     EN->>APP: look up federated credential<br/>(issuer, subject, audience must match exactly)
     APP-->>EN: github-actions-lab matches
     EN-->>GH: access token for the app, no secret involved
@@ -141,6 +142,7 @@ sequenceDiagram
 What to notice:
 
 - **Four locks stack up.** (1) The federated credential's subject is exact and immutable (owner and repo IDs plus `environment:lab`, no wildcards). (2) The `lab` environment accepts runs from `main` only. (3) The `lab` environment has a required reviewer, with administrator bypass switched off. (4) The workflow runs only on `workflow_dispatch`.
+- **Entra verifies the token before it trusts any claim.** It fetches GitHub's OIDC discovery document and signing keys (JWKS), then checks the JWT's signature, issuer and expiry. Only after that does it compare issuer, subject and audience with the federated credential.
 - **Immutable subject.** GitHub sends the `owner@id/repo@id` form for repositories created after 2026-07-15. The first, name-based credential failed with AADSTS700213 and was replaced. The numeric IDs cannot be recycled by another owner of the same name. See `risk-model.md` section 10.
 - **Proof the login used federation.** `appidacr` 2 means the client authenticated without a shared secret. Run `oidc-demo #2` printed it.
 - **Why the secret could then go.** Only after this login worked was the app's client secret removed (diagram 2, `Remove-NhiAppSecret.ps1`), which took `seed-02-longsecret` from score 20 to 0. Records: `examples/seed-02-before.json` and `examples/seed-02-after.json`.
@@ -178,7 +180,7 @@ flowchart TB
 
 What to notice:
 
-- **The credential and the permission live on different objects.** Scored one identity at a time, the blueprint has "a secret" and the agent has "a mail permission": two medium-looking risks. Because the blueprint's credential is exchanged for the agent's token, together they are armed privilege.
+- **The credential and the permission live on different objects.** Scored one identity at a time, the blueprint has "a secret" and the agent has "a mail permission": two separate findings that look unrelated (NHI-009 and NHI-004, both High). Because the blueprint's credential is exchanged for the agent's token, together they are armed privilege.
 - **COMBO-U3 is the only cross-identity rule.** It runs in a second pass, after every identity has its own findings, and follows the parent link (`agentIdentityBlueprintId`, an ID, never a name). It adds +15 once on the blueprint, however many children qualify, and the evidence lists the qualifying children.
 - **A harmless sibling is not penalised.** `Agent-Risky-2` shares the blueprint's credential but has no risky permission, so it keeps no finding. The agent roll-up (agent count, worst child) is context only and adds no points.
 - **Accountability for these objects is a sponsor, not an owner.** NHI-010 (blueprint) and NHI-011 (agent) test for an enabled sponsor. Agents inherit their blueprint's `ownerType`.
