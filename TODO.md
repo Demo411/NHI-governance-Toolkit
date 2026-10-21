@@ -49,7 +49,7 @@
       `owner@<id>/repo@<id>` parts is name-based: if the repo or org is deleted, renamed or
       re-created, another owner of that name can mint a token the credential accepts. Found live in
       Phase 5 (risk-model.md section 10). Detectable from the facts the scanner already records.
-- [ ] Untick "Allow administrators to bypass configured protection rules" on GitHub environment `lab` (Settings > Environments > lab) so the required reviewer cannot be bypassed even by an admin. GitHub setting: ask before changing.
+- [x] Untick "Allow administrators to bypass configured protection rules" on GitHub environment `lab` (done by Ademola), so the required reviewer cannot be bypassed even by an admin.
 - [ ] Consider moving azure/login from v2.3.1 to v3.x as a separate, reviewed change (pinned by SHA).
 - [ ] Check whether the FIC listing works on Agent ID blueprints (the scanner warns if not).
 

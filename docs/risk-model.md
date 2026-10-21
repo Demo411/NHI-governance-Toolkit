@@ -592,11 +592,11 @@ disabling it makes two tests fail.
 
 ### Live outcome (2026-10-21)
 
-All steps ran against the lab tenant. The FIC was updated to the immutable subject (one PATCH, subject only), and workflow run `oidc-demo #2` printed `idtyp` app, `appidacr` 2 and `appid` match true. `appidacr` 2 means the client authenticated with a federated assertion rather than a secret. Only after that did `Remove-NhiAppSecret.ps1` delete seed-02's one secret (keyId `44ea7c15-...`, on the application object), and a re-read showed 0 secrets.
+All steps ran against the lab tenant. The FIC was updated to the immutable subject (one PATCH, subject only), and workflow run `oidc-demo #2` printed `idtyp` app, `appidacr` 2 and `appid` match true. `appidacr` 2 means the client authenticated with a federated assertion rather than a secret. Only after that did `Remove-NhiAppSecret.ps1` delete seed-02's one secret (one keyId, on the application object), and a re-read showed 0 secrets.
 
 Re-scan `20261021-021751Z`: seed-02 has no secret and one matching FIC, the validator resolves state `federated`, expected rules are none, actual none, score 0 (before: NHI-002 + NHI-007 = 20). 10 identities have findings (was 11); the validator prints `RESULT: PASS` for 17 seeds and constraints C1-C8. Sanitized records: `examples/seed-02-before.json` and `examples/seed-02-after.json`.
 
-Residual lab risks, recorded in TODO.md: the environment setting "Allow administrators to bypass configured protection rules" is still on, and the scanner has no rule yet for broad or mutable GitHub FIC subjects.
+Hardening after the run: "Allow administrators to bypass configured protection rules" was switched off on environment `lab`, so the required reviewer applies to administrators too. Remaining gap, recorded in TODO.md: the scanner has no rule yet for broad or mutable GitHub FIC subjects.
 
 ### Verification
 

@@ -1,5 +1,5 @@
 {
-  "_note": "Sanitized example: tenantId, tenant domain and admin UPN replaced by placeholders. Everything else is verbatim from the real run. Only the seed-02-longsecret record is kept; scanMetadata is trimmed to identify the scan.",
+  "_note": "Sanitized example: tenantId, tenant domain, admin UPN, seed app ID and credential key ID replaced by placeholders. Everything else is verbatim from the real run. Only the seed-02-longsecret record is kept; scanMetadata is trimmed to identify the scan.",
   "scanMetadata": {
     "scannerVersion": "0.2.0",
     "tenantId": "<TENANT_ID>",
@@ -21,7 +21,7 @@
     "objectType": "application",
     "clientSecrets": [
       {
-        "keyId": "44ea7c15-228a-47e4-88c9-ac320a926c1d",
+        "keyId": "<SEED02_KEY_ID>",
         "displayName": "nhi-lab-seed secret (value discarded)",
         "startDateTime": "2026-10-11T13:02:46.103Z",
         "endDateTime": "2028-10-10T13:02:46.106Z"
@@ -32,7 +32,7 @@
     "federatedIdentityCredentials": "not collected (scanner older than 0.3.0)"
   },
   "identity": {
-    "appId": "82c97875-ad04-4ea1-ba6a-4e7ce5ad48de",
+    "appId": "<SEED02_APP_ID>",
     "displayName": "seed-02-longsecret",
     "ownerType": "ThisTenant",
     "identityType": "application",
@@ -55,7 +55,7 @@
           {
             "credentialType": "secret",
             "onObject": "application",
-            "keyId": "44ea7c15-228a-47e4-88c9-ac320a926c1d",
+            "keyId": "<SEED02_KEY_ID>",
             "displayName": "nhi-lab-seed secret (value discarded)",
             "startDateTime": "2026-10-11T13:02:46.103Z",
             "endDateTime": "2028-10-10T13:02:46.106Z",
@@ -76,7 +76,7 @@
           {
             "credentialType": "secret",
             "onObject": "application",
-            "keyId": "44ea7c15-228a-47e4-88c9-ac320a926c1d",
+            "keyId": "<SEED02_KEY_ID>",
             "displayName": "nhi-lab-seed secret (value discarded)",
             "startDateTime": "2026-10-11T13:02:46.103Z",
             "endDateTime": "2028-10-10T13:02:46.106Z",

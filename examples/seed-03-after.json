@@ -1,5 +1,5 @@
 {
-  "_note": "Sanitized example: tenantId, tenant domain and admin UPN replaced by placeholders. Everything else is verbatim from the real run.",
+  "_note": "Sanitized example: tenantId, tenant domain, admin UPN, seed app ID and credential key ID replaced by placeholders. Everything else is verbatim from the real run.",
   "scanMetadata": {
     "scannerVersion": "0.1.0",
     "tenantId": "<TENANT_ID>",
@@ -57,7 +57,7 @@
     "scoreCap": null
   },
   "identity": {
-    "appId": "0dff4417-335c-4ccd-81bd-21091e29f43d",
+    "appId": "<SEED03_APP_ID>",
     "displayName": "seed-03-expiring",
     "ownerType": "ThisTenant",
     "score": {
@@ -80,7 +80,7 @@
           {
             "credentialType": "secret",
             "onObject": "application",
-            "keyId": "b9291b82-585b-401d-adc0-28c290b69bcc",
+            "keyId": "<SEED03_KEY_ID>",
             "displayName": "nhi-lab-seed secret (value discarded)",
             "startDateTime": "2026-10-11T13:02:51.150Z",
             "endDateTime": "2026-10-12T13:02:51.150Z",
