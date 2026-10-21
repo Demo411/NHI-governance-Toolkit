@@ -12,6 +12,8 @@ flowchart LR
     F --> G{{"exit 0 = PASS<br/>exit 1 = FAIL"}}
 ```
 
+This is the short view. [`docs/architecture.md`](docs/architecture.md) has four diagrams: the read-only pipeline, the write path with its human checkpoints, the Phase 5 OIDC federation flow, and the Entra Agent ID model.
+
 ## Results
 
 Current (Phase 5), measured on the lab tenant (inventory `20261021-021751Z`):
@@ -121,7 +123,7 @@ Full list: [`docs/risk-model.md`](docs/risk-model.md) section 6 and [`TODO.md`](
 
 - **Phase 4 (done):** Entra Agent ID. 2 blueprints and 4 agent identities seeded, inventoried with sponsors and parent links, scored (NHI-009/010/011, COMBO-U3) and validated: live inventory `20261019-231744Z`, `RESULT: PASS`.
 - **Phase 5 (done):** `seed-02-longsecret`'s client secret replaced by GitHub Actions OIDC federation, secret deleted, re-scanned: score 20 to 0, validator `RESULT: PASS`, `appidacr` 2 proof. Future work: rules for broad or mutable GitHub FIC subjects.
-- **Phase 6:** controls mapping, architecture diagram, write-up.
+- **Phase 6:** controls mapping ([`docs/controls-mapping.md`](docs/controls-mapping.md), done), architecture diagrams ([`docs/architecture.md`](docs/architecture.md), done), write-up.
 
 ## How this was built
 
