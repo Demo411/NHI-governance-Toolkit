@@ -331,7 +331,7 @@ Checked on 2026-10-11. Only pages that were actually opened are cited as verifie
 | Migrate applications away from secrets | https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/migrate-applications-from-secrets | Exposed secret can escalate depending on app permissions; managed identity / federation | |
 | BloodHound AZMGGrantAppRoles | https://bloodhound.specterops.io/resources/edges/az-mg-grant-app-roles | Escalation chain to Global Administrator | Third party |
 | SpecterOps, Directory.ReadWrite.All | https://specterops.io/blog/2024/02/12/directory-readwrite-all-is-not-as-powerful-as-you-might-think/ | What Directory.ReadWrite.All can and cannot do | Third party; 2024 test |
-| NIST SP 800-53 Rev. 5 | https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final | Publication exists | AC-2/AC-6/IA-5 text not re-read |
+| NIST SP 800-53 Rev. 5 | https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final | Publication exists | AC-2/AC-6/IA-5/CM-8 base-control text read 2026-10-21 from the NIST OSCAL catalog (Rev. 5.2.0); see `docs/controls-mapping.md` |
 
 **Deliberately not cited:** the claim that the portal's add-secret dialog recommends 180 days
 for client secrets could not be verified as Microsoft guidance. The verified secret guidance is
