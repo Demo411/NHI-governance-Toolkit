@@ -1,0 +1,91 @@
+{
+  "_note": "Sanitized example: tenantId, tenant domain and admin UPN replaced by placeholders. Everything else is verbatim from the real run. Only the seed-02-longsecret record is kept; scanMetadata is trimmed to identify the scan.",
+  "scanMetadata": {
+    "scannerVersion": "0.2.0",
+    "tenantId": "<TENANT_ID>",
+    "account": "admin@<TENANT_DOMAIN>",
+    "scanStartUtc": "2026-10-19T23:17:44Z",
+    "scanEndUtc": "2026-10-19T23:18:29Z"
+  },
+  "inputs": {
+    "inventoryFile": "inventory-20261019-231744Z.json",
+    "inventorySha256": "3a4392c9536c2fc90fe5f01ac106ad6585c13bf8fe902628d774e5d63af77b2e",
+    "rulesFile": "risk-rules.json",
+    "rulesSha256": "b8c479d4406db3258b6a77d2d94c0ded1e55712eab1e5437eac2615c3523ef79",
+    "rulesSchemaVersion": "0.2.0-draft",
+    "scanStartUtc": "2026-10-19T23:17:44Z",
+    "inventoryScannerVersion": "0.2.0"
+  },
+  "validatorResolvedState": "with_secret",
+  "inventoryFacts": {
+    "objectType": "application",
+    "clientSecrets": [
+      {
+        "keyId": "44ea7c15-228a-47e4-88c9-ac320a926c1d",
+        "displayName": "nhi-lab-seed secret (value discarded)",
+        "startDateTime": "2026-10-11T13:02:46.103Z",
+        "endDateTime": "2028-10-10T13:02:46.106Z"
+      }
+    ],
+    "certificates": 0,
+    "servicePrincipalSecrets": 0,
+    "federatedIdentityCredentials": "not collected (scanner older than 0.3.0)"
+  },
+  "identity": {
+    "appId": "82c97875-ad04-4ea1-ba6a-4e7ce5ad48de",
+    "displayName": "seed-02-longsecret",
+    "ownerType": "ThisTenant",
+    "identityType": "application",
+    "score": {
+      "base": 20,
+      "uplift": 0,
+      "total": 20,
+      "capApplied": false
+    },
+    "findings": [
+      {
+        "ruleId": "NHI-002",
+        "name": "Client secret lifetime over 180 days",
+        "severity": "Medium",
+        "points": 10,
+        "nist": [
+          "IA-5"
+        ],
+        "evidence": [
+          {
+            "credentialType": "secret",
+            "onObject": "application",
+            "keyId": "44ea7c15-228a-47e4-88c9-ac320a926c1d",
+            "displayName": "nhi-lab-seed secret (value discarded)",
+            "startDateTime": "2026-10-11T13:02:46.103Z",
+            "endDateTime": "2028-10-10T13:02:46.106Z",
+            "expiredAtScan": false,
+            "lifetimeDays": 730
+          }
+        ]
+      },
+      {
+        "ruleId": "NHI-007",
+        "name": "Active client secret in use",
+        "severity": "Medium",
+        "points": 10,
+        "nist": [
+          "IA-5"
+        ],
+        "evidence": [
+          {
+            "credentialType": "secret",
+            "onObject": "application",
+            "keyId": "44ea7c15-228a-47e4-88c9-ac320a926c1d",
+            "displayName": "nhi-lab-seed secret (value discarded)",
+            "startDateTime": "2026-10-11T13:02:46.103Z",
+            "endDateTime": "2028-10-10T13:02:46.106Z",
+            "expiredAtScan": false,
+            "lifetimeDays": 730
+          }
+        ]
+      }
+    ],
+    "uplifts": []
+  }
+}

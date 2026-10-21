@@ -14,11 +14,14 @@ flowchart LR
 
 ## Results
 
-Current (Phase 4), measured on the lab tenant (inventory `20261019-231744Z`):
+Current (Phase 5), measured on the lab tenant (inventory `20261021-021751Z`):
 
+- **Phase 5, secret replaced by federation:** `seed-02-longsecret` went from a 730-day client secret (NHI-002 + NHI-007, score **20**) to **no secret** and a GitHub Actions OIDC federated credential, score **0**. The validator resolves its state as `federated` (no secret, and a credential matching issuer, immutable subject and audience exactly) and prints `RESULT: PASS` (17 seeds, C1-C8). Identities with findings went 11 to 10; nothing else changed. Proof the federation works: workflow run `oidc-demo #2` logged in with `idtyp` = app, `appidacr` = 2 (the token was proved by a federated assertion, not a secret) and `appid` matching. See [`examples/seed-02-before.json`](examples/seed-02-before.json) and [`examples/seed-02-after.json`](examples/seed-02-after.json).
+- **Lab finding:** the first federated credential used the classic name-based subject and failed with AADSTS700213, because GitHub now sends an *immutable* subject (`repo:<owner>@<id>/<repo>@<id>:...`) for repositories created after 2026-07-15. The credential was replaced with the immutable form, which is also the stronger trust: names can be recycled, numeric IDs cannot. See [`docs/risk-model.md`](docs/risk-model.md) section 10.
+- **Four locks on the federated path:** (1) the exact immutable FIC subject (owner and repo IDs plus `environment:lab`, no wildcards); (2) a main-only deployment branch rule on the `lab` environment; (3) a required reviewer (`Demo411`) on `lab`; (4) a `workflow_dispatch`-only trigger, so the workflow runs only when someone starts it by hand.
 - **101 identities** scored, including 2 agent blueprints and 4 agent identities (Entra Agent ID). **17 seeded identities** match the answer key and all **10 score constraints** hold: `RESULT: PASS`.
 - The risky blueprint (an active client secret above an agent holding `Mail.ReadWrite`) scores **40** (NHI-009 25 + COMBO-U3 15) and ranks second of all identities.
-- **117 Pester tests** on synthetic inventories (no tenant needed), **mutation-checked**: loosening the NHI-002 boundary, the NHI-003 expiry comparison, the resolved-appId check, or the ordinal output ordering each makes tests fail.
+- **120 Pester tests** on synthetic inventories (no tenant needed), **mutation-checked**: loosening the NHI-002 boundary, the NHI-003 expiry comparison, the resolved-appId check, or the ordinal output ordering each makes tests fail.
 - **History (Phase 3, inventory `20261012-130643Z`):** 89 identities scored (89 service principals, 11 of which also have an app registration); 11 seeded identities; 9 identities had findings, all 9 seeds. 7 of 8 rules active (NHI-006 deferred). All 11 seeds matched the answer key and all 7 score constraints held. 52 Pester tests.
 - **Reproducibility demo:** `seed-03-expiring` has a 1-day secret. Scored on a scan taken before it expired it gets NHI-007 and **10** points; scored on a later scan it gets NHI-003 and **3**. Re-running the engine on the same inventory gives a findings file with the identical SHA-256, and across the two findings files `seed-03-expiring` was the only identity whose rules or score changed. See [`examples/`](examples/).
 
@@ -117,7 +120,7 @@ Full list: [`docs/risk-model.md`](docs/risk-model.md) section 6 and [`TODO.md`](
 ## Roadmap
 
 - **Phase 4 (done):** Entra Agent ID. 2 blueprints and 4 agent identities seeded, inventoried with sponsors and parent links, scored (NHI-009/010/011, COMBO-U3) and validated: live inventory `20261019-231744Z`, `RESULT: PASS`.
-- **Phase 5:** replace one app's client secret with GitHub Actions OIDC workload identity federation, then re-scan for a before/after.
+- **Phase 5 (done):** `seed-02-longsecret`'s client secret replaced by GitHub Actions OIDC federation, secret deleted, re-scanned: score 20 to 0, validator `RESULT: PASS`, `appidacr` 2 proof. Future work: rules for broad or mutable GitHub FIC subjects.
 - **Phase 6:** controls mapping, architecture diagram, write-up.
 
 ## How this was built

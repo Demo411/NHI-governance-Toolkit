@@ -35,12 +35,12 @@
 
 ## Phase 5 backlog (GitHub Actions OIDC for seed-02)
 - [x] A: scanner v0.3.0 collects FICs; state-dependent answer key; workflow; remediation scripts; tests.
-- [ ] B: create GitHub environment `lab` (required reviewer) and secrets AZURE_CLIENT_ID / AZURE_TENANT_ID.
-- [ ] C: add the FIC to seed-02 (tenant change, -WhatIf first).
-- [ ] D: run and approve the workflow; check appidacr = 2.
-- [ ] E: delete seed-02's secret by keyId, only after D (tenant change, -WhatIf first).
-- [ ] F: rescan, score, validate; save sanitized before/after under examples/; update README results.
-- [ ] New rule idea: "broad FIC subject" (wildcard-like or branch-only subjects such as
+- [x] B: create GitHub environment `lab` (required reviewer) and secrets AZURE_CLIENT_ID / AZURE_TENANT_ID.
+- [x] C: add the FIC to seed-02 (tenant change, -WhatIf first).
+- [x] D: run and approve the workflow; check appidacr = 2.
+- [x] E: delete seed-02's secret by keyId, only after D (tenant change, -WhatIf first).
+- [x] F: rescan, score, validate; save sanitized before/after under examples/; update README results.
+- [ ] (future work, kept) New rule idea: "broad / mutable GitHub FIC subject" (wildcard-like or branch-only subjects such as
       `repo:org/repo:ref:refs/heads/main`, `pull_request` subjects, a missing environment, or an
       issuer that is not a known OIDC provider). Needs FIC data from several apps first; today the
       scanner only records the facts.
@@ -49,6 +49,7 @@
       `owner@<id>/repo@<id>` parts is name-based: if the repo or org is deleted, renamed or
       re-created, another owner of that name can mint a token the credential accepts. Found live in
       Phase 5 (risk-model.md section 10). Detectable from the facts the scanner already records.
+- [ ] Untick "Allow administrators to bypass configured protection rules" on GitHub environment `lab` (Settings > Environments > lab) so the required reviewer cannot be bypassed even by an admin. GitHub setting: ask before changing.
 - [ ] Consider moving azure/login from v2.3.1 to v3.x as a separate, reviewed change (pinned by SHA).
 - [ ] Check whether the FIC listing works on Agent ID blueprints (the scanner warns if not).
 

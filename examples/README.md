@@ -1,3 +1,5 @@
 # Examples
 
 These are sanitized outputs from two real scans of the lab tenant, taken before and after the secret on `seed-03-expiring` expired: `seed-03-before.json` and `seed-03-after.json` hold that identity's scored record (NHI-007, score 10, then NHI-003, score 3) with the scan metadata, and `ranked-summary.txt` is the engine's ranked console table for the newer scan. The tenant ID, tenant domain and admin account are replaced by `<TENANT_ID>` and `<TENANT_DOMAIN>` placeholders; everything else is verbatim, including the lab seed's own app ID and credential key ID.
+
+What changed in Phase 5: `seed-02-before.json` and `seed-02-after.json` hold `seed-02-longsecret` before and after its client secret was replaced by GitHub Actions OIDC federation (NHI-002 + NHI-007, score 20, validator state `with_secret`; then no secret, one federated credential with the immutable subject, no findings, score 0, state `federated`). Same sanitizing rules; each file also shows the inventory facts the validator pivoted on. The before scan predates scanner 0.3.0, so it did not collect federated credentials.

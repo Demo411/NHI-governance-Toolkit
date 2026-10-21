@@ -590,8 +590,14 @@ stubbed, asserting reads, writes, scopes and refusals; the workflow is checked a
 triggers, permissions, nothing sensitive printed). The "FIC must exist" guard was mutation-checked:
 disabling it makes two tests fail.
 
-### Not verified yet
+### Live outcome (2026-10-21)
 
-Everything here is offline. Not yet exercised against the live tenant: the FIC POST, `removePassword`,
-the FIC listing on a real app, and the workflow itself. Whether `GET .../federatedIdentityCredentials`
-works for Agent ID blueprints is also untested; the scanner will warn rather than fail if it does not.
+All steps ran against the lab tenant. The FIC was updated to the immutable subject (one PATCH, subject only), and workflow run `oidc-demo #2` printed `idtyp` app, `appidacr` 2 and `appid` match true. `appidacr` 2 means the client authenticated with a federated assertion rather than a secret. Only after that did `Remove-NhiAppSecret.ps1` delete seed-02's one secret (keyId `44ea7c15-...`, on the application object), and a re-read showed 0 secrets.
+
+Re-scan `20261021-021751Z`: seed-02 has no secret and one matching FIC, the validator resolves state `federated`, expected rules are none, actual none, score 0 (before: NHI-002 + NHI-007 = 20). 10 identities have findings (was 11); the validator prints `RESULT: PASS` for 17 seeds and constraints C1-C8. Sanitized records: `examples/seed-02-before.json` and `examples/seed-02-after.json`.
+
+Residual lab risks, recorded in TODO.md: the environment setting "Allow administrators to bypass configured protection rules" is still on, and the scanner has no rule yet for broad or mutable GitHub FIC subjects.
+
+### Verification
+
+FIC create, FIC subject update, `removePassword` and the workflow were verified live on 2026-10-20/21.

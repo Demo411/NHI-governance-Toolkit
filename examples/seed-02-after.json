@@ -1,0 +1,50 @@
+{
+  "_note": "Sanitized example: tenantId, tenant domain and admin UPN replaced by placeholders. Everything else is verbatim from the real run. Only the seed-02-longsecret record is kept; scanMetadata is trimmed to identify the scan.",
+  "scanMetadata": {
+    "scannerVersion": "0.3.0",
+    "tenantId": "<TENANT_ID>",
+    "account": "admin@<TENANT_DOMAIN>",
+    "scanStartUtc": "2026-10-21T02:17:51Z",
+    "scanEndUtc": "2026-10-21T02:19:07Z"
+  },
+  "inputs": {
+    "inventoryFile": "inventory-20261021-021751Z.json",
+    "inventorySha256": "c4101ba8de5252037602fa85bdc6389daed36af94bfd42035fbf0e9e77a3182d",
+    "rulesFile": "risk-rules.json",
+    "rulesSha256": "b8c479d4406db3258b6a77d2d94c0ded1e55712eab1e5437eac2615c3523ef79",
+    "rulesSchemaVersion": "0.2.0-draft",
+    "scanStartUtc": "2026-10-21T02:17:51Z",
+    "inventoryScannerVersion": "0.3.0"
+  },
+  "validatorResolvedState": "federated",
+  "inventoryFacts": {
+    "objectType": "application",
+    "clientSecrets": [],
+    "certificates": 0,
+    "servicePrincipalSecrets": 0,
+    "federatedIdentityCredentials": [
+      {
+        "name": "github-actions-lab",
+        "issuer": "https://token.actions.githubusercontent.com",
+        "subject": "repo:Demo411@181002116/NHI-governance-Toolkit@1415658131:environment:lab",
+        "audiences": [
+          "api://AzureADTokenExchange"
+        ]
+      }
+    ]
+  },
+  "identity": {
+    "appId": "82c97875-ad04-4ea1-ba6a-4e7ce5ad48de",
+    "displayName": "seed-02-longsecret",
+    "ownerType": "ThisTenant",
+    "identityType": "application",
+    "score": {
+      "base": 0,
+      "uplift": 0,
+      "total": 0,
+      "capApplied": false
+    },
+    "findings": [],
+    "uplifts": []
+  }
+}
